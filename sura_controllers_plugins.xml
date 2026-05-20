@@ -1,0 +1,78 @@
+<library path="sura_controllers">
+  <class
+    name="sura_controllers/common/BodyForceController"
+    type="sura_controllers::common::BodyForceController"
+    base_class_type="controller_interface::ChainableControllerInterface">
+    <description>Common body force controller</description>
+  </class>
+
+  <class
+    name="sura_controllers/auv/BodyForceController"
+    type="sura_controllers::common::BodyForceController"
+    base_class_type="controller_interface::ChainableControllerInterface">
+    <description>AUV body force controller</description>
+  </class>
+
+  <class
+    name="sura_controllers/auv/BodyVelocityController"
+    type="sura_controllers::auv::BodyVelocityController"
+    base_class_type="controller_interface::ChainableControllerInterface">
+    <description>AUV body velocity controller</description>
+  </class>
+
+  <class
+    name="sura_controllers/auv/StabilizeController"
+    type="sura_controllers::auv::StabilizeController"
+    base_class_type="controller_interface::ChainableControllerInterface">
+    <description>AUV attitude stabilization controller with yaw hold</description>
+  </class>
+
+  <class
+    name="sura_controllers/auv/DepthHoldController"
+    type="sura_controllers::auv::DepthHoldController"
+    base_class_type="controller_interface::ChainableControllerInterface">
+    <description>AUV attitude stabilization controller with yaw and depth hold</description>
+  </class>
+
+  <class
+    name="sura_controllers/auv/PositionHoldController"
+    type="sura_controllers::auv::PositionHoldController"
+    base_class_type="controller_interface::ChainableControllerInterface">
+    <description>AUV position hold controller chained into the body velocity controller</description>
+  </class>
+
+  <class
+    name="sura_controllers/auv/StateObserverController"
+    type="sura_controllers::auv::StateObserverController"
+    base_class_type="controller_interface::ControllerInterface">
+    <description>AUV state observer and diagonal model identifier in NED</description>
+  </class>
+
+  <class
+    name="sura_controllers/auv/Mpc4dofController"
+    type="sura_controllers::auv::Mpc4dofController"
+    base_class_type="controller_interface::ControllerInterface">
+    <description>AUV 4DOF chained MPC controller for x, y, z, and yaw wrench references</description>
+  </class>
+
+  <class
+    name="sura_controllers/usv/BodyForceController"
+    type="sura_controllers::common::BodyForceController"
+    base_class_type="controller_interface::ChainableControllerInterface">
+    <description>USV body force controller</description>
+  </class>
+
+  <class
+    name="sura_controllers/usv/BodyPositionController"
+    type="sura_controllers::usv::BodyPositionController"
+    base_class_type="controller_interface::ControllerInterface">
+    <description>USV body position controller</description>
+  </class>
+
+  <class
+    name="sura_controllers/usv/BodyVelocityController"
+    type="sura_controllers::usv::BodyVelocityController"
+    base_class_type="controller_interface::ChainableControllerInterface">
+    <description>USV body velocity controller</description>
+  </class>
+</library>
