@@ -491,7 +491,7 @@ void PositionHoldController::setSetpointFromNavigator(const NavigatorMsg & navig
 {
   current_setpoint_.pose = navigator_msg.position;
   current_setpoint_.header.frame_id =
-    setpoint_frame_id_.empty() ? "map" : setpoint_frame_id_;
+    setpoint_frame_id_.empty() ? "blueboat/map" : setpoint_frame_id_;
   setpoint_initialized_ = true;
   updateReferenceInterfacesFromSetpoint();
 }
@@ -501,7 +501,7 @@ void PositionHoldController::applyExternalSetpoint(const PoseStampedMsg & setpoi
   current_setpoint_ = setpoint_msg;
   if (current_setpoint_.header.frame_id.empty()) {
     current_setpoint_.header.frame_id =
-      setpoint_frame_id_.empty() ? "map" : setpoint_frame_id_;
+      setpoint_frame_id_.empty() ? "blueboat/map" : setpoint_frame_id_;
   }
   setpoint_initialized_ = true;
   resetPidStates();

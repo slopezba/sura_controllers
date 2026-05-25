@@ -141,7 +141,7 @@ void BodyPositionController::publishThresholdMarkers()
     [this](int id, double radius, float r, float g, float b)
     {
       visualization_msgs::msg::Marker marker;
-      marker.header.frame_id = "map";
+      marker.header.frame_id = "blueboat/map";
       marker.header.stamp = get_node()->now();
       marker.ns = "body_position_thresholds";
       marker.id = id;

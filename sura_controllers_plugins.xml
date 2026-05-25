@@ -75,4 +75,25 @@
     base_class_type="controller_interface::ChainableControllerInterface">
     <description>USV body velocity controller</description>
   </class>
+
+  <class
+    name="catamaran_controllers/BodyForceController"
+    type="sura_controllers::common::BodyForceController"
+    base_class_type="controller_interface::ChainableControllerInterface">
+    <description>Legacy alias for the USV body force controller</description>
+  </class>
+
+  <class
+    name="catamaran_controllers/BodyPositionController"
+    type="sura_controllers::usv::BodyPositionController"
+    base_class_type="controller_interface::ControllerInterface">
+    <description>Legacy alias for the USV body position controller</description>
+  </class>
+
+  <class
+    name="catamaran_controllers/BodyVelocityController"
+    type="sura_controllers::usv::BodyVelocityController"
+    base_class_type="controller_interface::ChainableControllerInterface">
+    <description>Legacy alias for the USV body velocity controller</description>
+  </class>
 </library>
