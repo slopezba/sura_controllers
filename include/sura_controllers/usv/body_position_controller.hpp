@@ -70,8 +70,8 @@ private:
   realtime_tools::RealtimeBuffer<std::shared_ptr<NavigatorMsg>> navigator_buffer_;
   realtime_tools::RealtimeBuffer<std::shared_ptr<SetPointMsg>> setpoint_buffer_;
 
-  std::string navigator_topic_{"/navigator_msg"};
-  std::string setpoint_topic_{"/body_position/setpoint"};
+  std::string navigator_topic_{"navigator/msg"};
+  std::string setpoint_topic_{"body_position/setpoint"};
   std::string body_velocity_controller_name_{"body_velocity_controller"};
   std::string debug_topic_{"debug"};
 

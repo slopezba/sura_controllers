@@ -97,8 +97,8 @@ void BodyVelocityController::recordDebugCycle(
 controller_interface::CallbackReturn BodyVelocityController::on_init()
 {
   try {
-    auto_declare<std::string>("cmd_vel_topic", "/cmd_vel");
-    auto_declare<std::string>("navigator_topic", "/navigator_msg");
+    auto_declare<std::string>("cmd_vel_topic", "cmd_vel");
+    auto_declare<std::string>("navigator_topic", "navigator/msg");
     auto_declare<std::string>("body_force_controller_name", "body_force_controller");
 
     auto_declare<double>("kp_u", 0.0);

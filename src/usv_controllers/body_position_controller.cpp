@@ -179,8 +179,8 @@ void BodyPositionController::publishThresholdMarkers()
 controller_interface::CallbackReturn BodyPositionController::on_init()
 {
   try {
-    auto_declare<std::string>("navigator_topic", "/navigator_msg");
-    auto_declare<std::string>("setpoint_topic", "/body_position/setpoint");
+    auto_declare<std::string>("navigator_topic", "navigator/msg");
+    auto_declare<std::string>("setpoint_topic", "body_position/setpoint");
     auto_declare<std::string>("body_velocity_controller_name", "body_velocity_controller");
 
     // APPROACH mode
@@ -293,7 +293,7 @@ controller_interface::CallbackReturn BodyPositionController::on_configure(
     });
 
   threshold_marker_pub_ =
-    get_node()->create_publisher<MarkerArrayMsg>("/body_position/threshold_markers", 10);
+    get_node()->create_publisher<MarkerArrayMsg>("body_position/threshold_markers", 10);
 
   debug_pub_.reset();
   debug_timer_.reset();
