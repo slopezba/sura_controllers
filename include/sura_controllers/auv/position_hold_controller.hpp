@@ -138,6 +138,8 @@ private:
   std::string setpoint_topic_;
   std::string feedforward_topic_;
   std::string navigator_topic_;
+  std::string output_topic_;
+  std::string pid_terms_topic_;
   std::string debug_topic_;
   std::string body_velocity_controller_name_;
   std::string setpoint_frame_id_;

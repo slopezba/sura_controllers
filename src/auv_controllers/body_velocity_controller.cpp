@@ -66,6 +66,10 @@ controller_interface::CallbackReturn BodyVelocityController::on_init()
     auto_declare<std::string>(
       "feedforward_topic", "/cirtesub/controller/stabilize/feedforward");
     auto_declare<std::string>(
+      "output_topic", "/cirtesub/controller/body_velocity/output");
+    auto_declare<std::string>(
+      "pid_terms_topic", "/cirtesub/controller/body_velocity/pid_terms");
+    auto_declare<std::string>(
       "body_force_controller_name", "body_force");
 
     auto_declare<double>("kp_x", 0.0);
@@ -129,6 +133,8 @@ controller_interface::CallbackReturn BodyVelocityController::on_configure(
   setpoint_topic_ = get_node()->get_parameter("setpoint_topic").as_string();
   navigator_topic_ = get_node()->get_parameter("navigator_topic").as_string();
   feedforward_topic_ = get_node()->get_parameter("feedforward_topic").as_string();
+  output_topic_ = get_node()->get_parameter("output_topic").as_string();
+  pid_terms_topic_ = get_node()->get_parameter("pid_terms_topic").as_string();
   debug_enabled_ = get_node()->get_parameter("debug.enabled").as_bool();
   debug_topic_ = get_node()->get_parameter("debug.topic").as_string();
   body_force_controller_name_ =
@@ -186,12 +192,12 @@ controller_interface::CallbackReturn BodyVelocityController::on_configure(
   feedforward_rt_pub_ =
     std::make_shared<realtime_tools::RealtimePublisher<WrenchMsg>>(feedforward_pub_);
   output_pub_ = get_node()->create_publisher<WrenchMsg>(
-    "/cirtesub/controller/body_velocity/output",
+    output_topic_,
     rclcpp::SystemDefaultsQoS());
   output_rt_pub_ =
     std::make_shared<realtime_tools::RealtimePublisher<WrenchMsg>>(output_pub_);
   pid_terms_pub_ = get_node()->create_publisher<Float64MultiArrayMsg>(
-    "/cirtesub/controller/body_velocity/pid_terms",
+    pid_terms_topic_,
     rclcpp::SystemDefaultsQoS());
   pid_terms_rt_pub_ =
     std::make_shared<realtime_tools::RealtimePublisher<Float64MultiArrayMsg>>(pid_terms_pub_);

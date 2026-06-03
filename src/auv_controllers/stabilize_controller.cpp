@@ -69,6 +69,10 @@ controller_interface::CallbackReturn StabilizeController::on_init()
     auto_declare<std::string>(
       "setpoint_topic", "/cirtesub/controller/stabilize/set_point");
     auto_declare<std::string>(
+      "output_topic", "/cirtesub/controller/stabilize/output");
+    auto_declare<std::string>(
+      "pid_terms_topic", "/cirtesub/controller/stabilize/pid_terms");
+    auto_declare<std::string>(
       "enable_roll_pitch_service_name", "/cirtesub/controller/stabilize/enable_roll_pitch");
     auto_declare<std::string>(
       "disable_roll_pitch_service_name", "/cirtesub/controller/stabilize/disable_roll_pitch");
@@ -141,6 +145,8 @@ controller_interface::CallbackReturn StabilizeController::on_configure(
   feedforward_topic_ = get_node()->get_parameter("feedforward_topic").as_string();
   navigator_topic_ = get_node()->get_parameter("navigator_topic").as_string();
   setpoint_topic_ = get_node()->get_parameter("setpoint_topic").as_string();
+  output_topic_ = get_node()->get_parameter("output_topic").as_string();
+  pid_terms_topic_ = get_node()->get_parameter("pid_terms_topic").as_string();
   enable_roll_pitch_service_name_ =
     get_node()->get_parameter("enable_roll_pitch_service_name").as_string();
   disable_roll_pitch_service_name_ =
@@ -223,12 +229,12 @@ controller_interface::CallbackReturn StabilizeController::on_configure(
   setpoint_rt_pub_ =
     std::make_shared<realtime_tools::RealtimePublisher<Vector3Msg>>(setpoint_pub_);
   output_pub_ = get_node()->create_publisher<WrenchMsg>(
-    "/cirtesub/controller/stabilize/output",
+    output_topic_,
     rclcpp::SystemDefaultsQoS());
   output_rt_pub_ =
     std::make_shared<realtime_tools::RealtimePublisher<WrenchMsg>>(output_pub_);
   pid_terms_pub_ = get_node()->create_publisher<Float64MultiArrayMsg>(
-    "/cirtesub/controller/stabilize/pid_terms",
+    pid_terms_topic_,
     rclcpp::SystemDefaultsQoS());
   pid_terms_rt_pub_ =
     std::make_shared<realtime_tools::RealtimePublisher<Float64MultiArrayMsg>>(pid_terms_pub_);

@@ -97,6 +97,7 @@ private:
   realtime_tools::RealtimeBuffer<std::shared_ptr<WrenchMsg>> rt_buffer_ptr_;
 
   std::string input_topic_;
+  std::string output_topic_;
   std::string wrench_output_topic_;
   std::string debug_topic_;
   std::string base_link_;

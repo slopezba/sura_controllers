@@ -260,6 +260,7 @@ controller_interface::CallbackReturn BodyForceController::on_init()
 {
   try {
     auto_declare<std::string>("input_topic", "/cirtesub/controller/body_force/command");
+    auto_declare<std::string>("output_topic", "/cirtesub/controller/body_force/output");
     auto_declare<std::string>("wrench_output_topic", "/cirtesub/controller/body_force/wrench");
     auto_declare<std::string>("base_link", "base_link");
     auto_declare<bool>("debug.enabled", false);
@@ -312,6 +313,7 @@ controller_interface::CallbackReturn BodyForceController::on_configure(
   const rclcpp_lifecycle::State &)
 {
   input_topic_ = get_node()->get_parameter("input_topic").as_string();
+  output_topic_ = get_node()->get_parameter("output_topic").as_string();
   wrench_output_topic_ = get_node()->get_parameter("wrench_output_topic").as_string();
   base_link_ = get_node()->get_parameter("base_link").as_string();
   debug_enabled_ = get_node()->get_parameter("debug.enabled").as_bool();
@@ -355,7 +357,7 @@ controller_interface::CallbackReturn BodyForceController::on_configure(
     });
 
   output_pub_ = this->get_node()->create_publisher<Float64MultiArrayMsg>(
-    "/cirtesub/controller/body_force/output",
+    output_topic_,
     rclcpp::SystemDefaultsQoS());
   output_rt_pub_ =
     std::make_shared<realtime_tools::RealtimePublisher<Float64MultiArrayMsg>>(output_pub_);

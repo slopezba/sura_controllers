@@ -67,6 +67,8 @@ controller_interface::CallbackReturn PositionHoldController::on_init()
     auto_declare<std::string>("setpoint_topic", "/cirtesub/controller/position_hold/setpoint");
     auto_declare<std::string>("feedforward_topic", "/cirtesub/controller/position_hold/feedforward");
     auto_declare<std::string>("navigator_topic", "/cirtesub/navigator/navigation");
+    auto_declare<std::string>("output_topic", "/cirtesub/controller/position_hold/output");
+    auto_declare<std::string>("pid_terms_topic", "/cirtesub/controller/position_hold/pid_terms");
     auto_declare<std::string>("body_velocity_controller_name", "body_velocity");
     auto_declare<std::string>("setpoint_frame_id", "world_ned");
 
@@ -145,6 +147,8 @@ controller_interface::CallbackReturn PositionHoldController::on_configure(
   setpoint_topic_ = get_node()->get_parameter("setpoint_topic").as_string();
   feedforward_topic_ = get_node()->get_parameter("feedforward_topic").as_string();
   navigator_topic_ = get_node()->get_parameter("navigator_topic").as_string();
+  output_topic_ = get_node()->get_parameter("output_topic").as_string();
+  pid_terms_topic_ = get_node()->get_parameter("pid_terms_topic").as_string();
   body_velocity_controller_name_ =
     get_node()->get_parameter("body_velocity_controller_name").as_string();
   setpoint_frame_id_ = get_node()->get_parameter("setpoint_frame_id").as_string();
@@ -225,12 +229,12 @@ controller_interface::CallbackReturn PositionHoldController::on_configure(
   setpoint_rt_pub_ =
     std::make_shared<realtime_tools::RealtimePublisher<PoseStampedMsg>>(setpoint_pub_);
   output_pub_ = get_node()->create_publisher<TwistMsg>(
-    "/cirtesub/controller/position_hold/output",
+    output_topic_,
     rclcpp::SystemDefaultsQoS());
   output_rt_pub_ =
     std::make_shared<realtime_tools::RealtimePublisher<TwistMsg>>(output_pub_);
   pid_terms_pub_ = get_node()->create_publisher<Float64MultiArrayMsg>(
-    "/cirtesub/controller/position_hold/pid_terms",
+    pid_terms_topic_,
     rclcpp::SystemDefaultsQoS());
   pid_terms_rt_pub_ =
     std::make_shared<realtime_tools::RealtimePublisher<Float64MultiArrayMsg>>(pid_terms_pub_);
