@@ -112,12 +112,14 @@ private:
     double torque_y,
     double torque_z,
     const std::array<PidTerms, 4> & pid_terms);
+  bool applyExternalSetpoint(const SetPointMsg & setpoint_msg);
   void setRollPitchEnabled(bool enabled, bool request_zero_setpoint);
   void resetDebugStats();
   void publishDebugStats();
 
   rclcpp::Subscription<WrenchMsg>::SharedPtr feedforward_sub_;
   rclcpp::Subscription<NavigatorMsg>::SharedPtr navigator_sub_;
+  rclcpp::Subscription<SetPointMsg>::SharedPtr setpoint_sub_;
   rclcpp::Service<TriggerSrv>::SharedPtr enable_roll_pitch_srv_;
   rclcpp::Service<TriggerSrv>::SharedPtr disable_roll_pitch_srv_;
   rclcpp::Publisher<SetPointMsg>::SharedPtr setpoint_pub_;
@@ -131,6 +133,7 @@ private:
 
   realtime_tools::RealtimeBuffer<std::shared_ptr<WrenchMsg>> feedforward_buffer_;
   realtime_tools::RealtimeBuffer<std::shared_ptr<NavigatorMsg>> navigator_buffer_;
+  realtime_tools::RealtimeBuffer<std::shared_ptr<SetPointMsg>> setpoint_buffer_;
   realtime_tools::RealtimeBuffer<bool> allow_roll_pitch_buffer_;
 
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
@@ -192,6 +195,7 @@ private:
   bool yaw_feedforward_active_{false};
   bool depth_feedforward_active_{false};
   std::atomic<bool> zero_roll_pitch_requested_{false};
+  std::atomic<bool> new_setpoint_requested_{false};
 
   AxisPidState roll_pid_;
   AxisPidState pitch_pid_;

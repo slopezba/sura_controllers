@@ -194,6 +194,19 @@ controller_interface::CallbackReturn DepthHoldController::on_configure(
   depth_command_threshold_ =
     std::max(0.0, get_node()->get_parameter("depth_command_threshold").as_double());
 
+  rclcpp::SubscriptionOptions setpoint_subscription_options;
+  setpoint_subscription_options.ignore_local_publications = true;
+
+  setpoint_sub_ = get_node()->create_subscription<SetPointMsg>(
+    setpoint_topic_,
+    rclcpp::SystemDefaultsQoS(),
+    [this](const SetPointMsg::SharedPtr msg)
+    {
+      setpoint_buffer_.writeFromNonRT(msg);
+      new_setpoint_requested_.store(true);
+    },
+    setpoint_subscription_options);
+
   feedforward_sub_ = get_node()->create_subscription<WrenchMsg>(
     feedforward_topic_,
     rclcpp::SystemDefaultsQoS(),
@@ -328,6 +341,7 @@ controller_interface::CallbackReturn DepthHoldController::on_activate(
   yaw_feedforward_active_ = false;
   depth_feedforward_active_ = false;
   zero_roll_pitch_requested_.store(false);
+  new_setpoint_requested_.store(false);
   allow_roll_pitch_buffer_.writeFromNonRT(allow_roll_pitch_);
   first_update_ = true;
   std::fill(
@@ -390,6 +404,7 @@ controller_interface::CallbackReturn DepthHoldController::on_deactivate(
   yaw_feedforward_active_ = false;
   depth_feedforward_active_ = false;
   zero_roll_pitch_requested_.store(false);
+  new_setpoint_requested_.store(false);
   allow_roll_pitch_buffer_.writeFromNonRT(allow_roll_pitch_);
   first_update_ = true;
   std::fill(
@@ -499,6 +514,45 @@ rcl_interfaces::msg::SetParametersResult DepthHoldController::parametersCallback
   }
 
   return result;
+}
+
+bool DepthHoldController::applyExternalSetpoint(const SetPointMsg & setpoint_msg)
+{
+  bool changed = false;
+
+  if (std::isfinite(setpoint_msg.position.z)) {
+    depth_setpoint_ = setpoint_msg.position.z;
+    depth_setpoint_initialized_ = true;
+    depth_pid_ = AxisPidState{};
+    depth_feedforward_active_ = false;
+    changed = true;
+  }
+
+  if (std::isfinite(setpoint_msg.rpy.x)) {
+    roll_setpoint_ = setpoint_msg.rpy.x;
+    roll_setpoint_initialized_ = true;
+    roll_pid_ = AxisPidState{};
+    roll_feedforward_active_ = false;
+    changed = true;
+  }
+
+  if (std::isfinite(setpoint_msg.rpy.y)) {
+    pitch_setpoint_ = setpoint_msg.rpy.y;
+    pitch_setpoint_initialized_ = true;
+    pitch_pid_ = AxisPidState{};
+    pitch_feedforward_active_ = false;
+    changed = true;
+  }
+
+  if (std::isfinite(setpoint_msg.rpy.z)) {
+    yaw_setpoint_ = setpoint_msg.rpy.z;
+    yaw_setpoint_initialized_ = true;
+    yaw_pid_ = AxisPidState{};
+    yaw_feedforward_active_ = false;
+    changed = true;
+  }
+
+  return changed;
 }
 
 double DepthHoldController::computePid(
@@ -729,6 +783,13 @@ controller_interface::return_type DepthHoldController::update_and_write_commands
     yaw_setpoint_initialized_ = true;
     depth_setpoint_initialized_ = true;
     publishSetpoint();
+  }
+
+  auto setpoint_msg = setpoint_buffer_.readFromRT();
+  if (new_setpoint_requested_.exchange(false) && setpoint_msg && *setpoint_msg) {
+    if (applyExternalSetpoint(*(*setpoint_msg))) {
+      publishSetpoint();
+    }
   }
 
   const double force_x =
