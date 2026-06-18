@@ -63,19 +63,19 @@ controller_interface::CallbackReturn DepthHoldController::on_init()
 {
   try {
     auto_declare<std::string>(
-      "feedforward_topic", "/cirtesub/controller/depth_hold/feedforward");
+      "feedforward_topic", "depth_hold/feedforward");
     auto_declare<std::string>(
-      "navigator_topic", "/cirtesub/navigator/navigation");
+      "navigator_topic", "navigator/navigation");
     auto_declare<std::string>(
-      "setpoint_topic", "/cirtesub/controller/depth_hold/set_point");
+      "setpoint_topic", "depth_hold/set_point");
     auto_declare<std::string>(
-      "output_topic", "/cirtesub/controller/depth_hold/output");
+      "output_topic", "depth_hold/output");
     auto_declare<std::string>(
-      "pid_terms_topic", "/cirtesub/controller/depth_hold/pid_terms");
+      "pid_terms_topic", "depth_hold/pid_terms");
     auto_declare<std::string>(
-      "enable_roll_pitch_service_name", "/cirtesub/controller/depth_hold/enable_roll_pitch");
+      "enable_roll_pitch_service_name", "depth_hold/enable_roll_pitch");
     auto_declare<std::string>(
-      "disable_roll_pitch_service_name", "/cirtesub/controller/depth_hold/disable_roll_pitch");
+      "disable_roll_pitch_service_name", "depth_hold/disable_roll_pitch");
     auto_declare<std::string>(
       "body_force_controller_name", "body_force");
 

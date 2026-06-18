@@ -64,11 +64,11 @@ void PositionHoldController::publishDebugStats()
 controller_interface::CallbackReturn PositionHoldController::on_init()
 {
   try {
-    auto_declare<std::string>("setpoint_topic", "/cirtesub/controller/position_hold/setpoint");
-    auto_declare<std::string>("feedforward_topic", "/cirtesub/controller/position_hold/feedforward");
-    auto_declare<std::string>("navigator_topic", "/cirtesub/navigator/navigation");
-    auto_declare<std::string>("output_topic", "/cirtesub/controller/position_hold/output");
-    auto_declare<std::string>("pid_terms_topic", "/cirtesub/controller/position_hold/pid_terms");
+    auto_declare<std::string>("setpoint_topic", "position_hold/setpoint");
+    auto_declare<std::string>("feedforward_topic", "position_hold/feedforward");
+    auto_declare<std::string>("navigator_topic", "navigator/navigation");
+    auto_declare<std::string>("output_topic", "position_hold/output");
+    auto_declare<std::string>("pid_terms_topic", "position_hold/pid_terms");
     auto_declare<std::string>("body_velocity_controller_name", "body_velocity");
     auto_declare<std::string>("setpoint_frame_id", "world_ned");
 
@@ -495,7 +495,7 @@ void PositionHoldController::setSetpointFromNavigator(const NavigatorMsg & navig
 {
   current_setpoint_.pose = navigator_msg.position;
   current_setpoint_.header.frame_id =
-    setpoint_frame_id_.empty() ? "blueboat/map" : setpoint_frame_id_;
+    setpoint_frame_id_.empty() ? "world_ned" : setpoint_frame_id_;
   setpoint_initialized_ = true;
   updateReferenceInterfacesFromSetpoint();
 }
@@ -505,7 +505,7 @@ void PositionHoldController::applyExternalSetpoint(const PoseStampedMsg & setpoi
   current_setpoint_ = setpoint_msg;
   if (current_setpoint_.header.frame_id.empty()) {
     current_setpoint_.header.frame_id =
-      setpoint_frame_id_.empty() ? "blueboat/map" : setpoint_frame_id_;
+      setpoint_frame_id_.empty() ? "world_ned" : setpoint_frame_id_;
   }
   setpoint_initialized_ = true;
   resetPidStates();

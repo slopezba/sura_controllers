@@ -259,9 +259,9 @@ void BodyForceController::publishDebugStats()
 controller_interface::CallbackReturn BodyForceController::on_init()
 {
   try {
-    auto_declare<std::string>("input_topic", "/cirtesub/controller/body_force/command");
-    auto_declare<std::string>("output_topic", "/cirtesub/controller/body_force/output");
-    auto_declare<std::string>("wrench_output_topic", "/cirtesub/controller/body_force/wrench");
+    auto_declare<std::string>("input_topic", "body_force/command");
+    auto_declare<std::string>("output_topic", "body_force/output");
+    auto_declare<std::string>("wrench_output_topic", "body_force/wrench");
     auto_declare<std::string>("base_link", "base_link");
     auto_declare<bool>("debug.enabled", false);
     auto_declare<std::string>("debug.topic", "debug");

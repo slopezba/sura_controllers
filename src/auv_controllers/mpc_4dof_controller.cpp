@@ -337,8 +337,8 @@ bool Mpc4dofController::MpcQpSolver::solve(
 controller_interface::CallbackReturn Mpc4dofController::on_init()
 {
   try {
-    auto_declare<std::string>("navigator_topic", "/cirtesub/navigator/navigation");
-    auto_declare<std::string>("setpoint_topic", "/cirtesub/controller/mpc_4dof/setpoint");
+    auto_declare<std::string>("navigator_topic", "navigator/navigation");
+    auto_declare<std::string>("setpoint_topic", "mpc_4dof/setpoint");
     auto_declare<std::string>("body_force_controller_name", "body_force");
     auto_declare<std::string>("world_frame_id", "world_ned");
     auto_declare<std::string>("base_frame_id", "");

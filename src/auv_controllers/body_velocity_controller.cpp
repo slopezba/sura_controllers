@@ -60,15 +60,15 @@ controller_interface::CallbackReturn BodyVelocityController::on_init()
 {
   try {
     auto_declare<std::string>(
-      "setpoint_topic", "/cirtesub/controller/body_velocity/setpoint");
+      "setpoint_topic", "body_velocity/setpoint");
     auto_declare<std::string>(
-      "navigator_topic", "/cirtesub/navigator/navigation");
+      "navigator_topic", "navigator/navigation");
     auto_declare<std::string>(
-      "feedforward_topic", "/cirtesub/controller/stabilize/feedforward");
+      "feedforward_topic", "stabilize/feedforward");
     auto_declare<std::string>(
-      "output_topic", "/cirtesub/controller/body_velocity/output");
+      "output_topic", "body_velocity/output");
     auto_declare<std::string>(
-      "pid_terms_topic", "/cirtesub/controller/body_velocity/pid_terms");
+      "pid_terms_topic", "body_velocity/pid_terms");
     auto_declare<std::string>(
       "body_force_controller_name", "body_force");
 

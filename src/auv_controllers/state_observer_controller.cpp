@@ -48,9 +48,9 @@ controller_interface::CallbackReturn StateObserverController::on_init()
   try {
     auto_declare<std::string>("navigator_topic", "");
     auto_declare<std::string>("force_topic", "");
-    auto_declare<std::string>("imu_topic", "/cirtesub/sensors/imu");
-    auto_declare<std::string>("aruco_pose_topic", "/cirtesub/sensors/aruco/pose_enu");
-    auto_declare<std::string>("depth_pose_topic", "/cirtesub/sensors/pressure/pose");
+    auto_declare<std::string>("imu_topic", "sensors/imu");
+    auto_declare<std::string>("aruco_pose_topic", "sensors/aruco/pose_enu");
+    auto_declare<std::string>("depth_pose_topic", "sensors/pressure/pose");
     auto_declare<std::string>("predicted_pose_topic", "state_observer/predicted_pose");
     auto_declare<std::string>("predicted_odometry_topic", "state_observer/predicted_odometry");
     auto_declare<std::string>("model_topic", "state_observer/model");
