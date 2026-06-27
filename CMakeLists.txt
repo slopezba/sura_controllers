@@ -18,6 +18,8 @@ find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(urdf REQUIRED)
+find_package(kdl_parser REQUIRED)
+find_package(orocos_kdl REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(osqp_vendor REQUIRED)
 find_package(osqp REQUIRED)
@@ -38,6 +40,7 @@ add_library(${PROJECT_NAME} SHARED
   src/common_controllers/body_force_controller.cpp
   src/usv_controllers/body_position_controller.cpp
   src/usv_controllers/body_velocity_controller.cpp
+  src/uvms_controllers/alpha_cartesian_velocity_controller.cpp
 )
 
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
@@ -49,6 +52,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 
 target_link_libraries(${PROJECT_NAME}
   Eigen3::Eigen
+  ${orocos_kdl_LIBRARIES}
   osqp::osqp
   tinyxml2::tinyxml2
   yaml-cpp
@@ -68,6 +72,8 @@ ament_target_dependencies(${PROJECT_NAME}
   sensor_msgs
   sura_msgs
   urdf
+  kdl_parser
+  orocos_kdl
   tf2
   visualization_msgs
 )
@@ -111,6 +117,8 @@ ament_export_dependencies(
   osqp_vendor
   sura_msgs
   urdf
+  kdl_parser
+  orocos_kdl
   tf2
   yaml-cpp
   visualization_msgs

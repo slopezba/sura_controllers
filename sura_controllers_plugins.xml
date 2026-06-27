@@ -75,4 +75,11 @@
     base_class_type="controller_interface::ChainableControllerInterface">
     <description>USV body velocity controller</description>
   </class>
+
+  <class
+    name="sura_controllers/uvms/AlphaCartesianVelocityController"
+    type="sura_controllers::uvms::AlphaCartesianVelocityController"
+    base_class_type="controller_interface::ControllerInterface">
+    <description>Alpha manipulator Cartesian velocity controller</description>
+  </class>
 </library>
