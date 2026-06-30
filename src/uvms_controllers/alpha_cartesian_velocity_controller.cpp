@@ -46,6 +46,13 @@ controller_interface::CallbackReturn AlphaCartesianVelocityController::on_init()
     auto_declare<std::vector<double>>("velocity_limits", {});
     auto_declare<double>("dls_lambda", 0.05);
     auto_declare<double>("command_timeout_sec", 0.5);
+    auto_declare<bool>("linear_pose_hold_enabled", true);
+    auto_declare<double>("linear_hold_kp", 1.0);
+    auto_declare<double>("linear_hold_ki", 0.0);
+    auto_declare<double>("linear_hold_kd", 0.0);
+    auto_declare<double>("linear_hold_integral_limit", 0.05);
+    auto_declare<double>("linear_hold_max_velocity", 0.03);
+    auto_declare<double>("linear_command_threshold", 1e-4);
   } catch (const std::exception & e) {
     RCLCPP_ERROR(get_node()->get_logger(), "Exception in on_init: %s", e.what());
     return controller_interface::CallbackReturn::ERROR;
@@ -98,6 +105,17 @@ controller_interface::CallbackReturn AlphaCartesianVelocityController::on_config
   velocity_limits_ = get_node()->get_parameter("velocity_limits").as_double_array();
   dls_lambda_ = get_node()->get_parameter("dls_lambda").as_double();
   command_timeout_sec_ = get_node()->get_parameter("command_timeout_sec").as_double();
+  linear_pose_hold_enabled_ =
+    get_node()->get_parameter("linear_pose_hold_enabled").as_bool();
+  linear_hold_kp_ = get_node()->get_parameter("linear_hold_kp").as_double();
+  linear_hold_ki_ = get_node()->get_parameter("linear_hold_ki").as_double();
+  linear_hold_kd_ = get_node()->get_parameter("linear_hold_kd").as_double();
+  linear_hold_integral_limit_ =
+    std::abs(get_node()->get_parameter("linear_hold_integral_limit").as_double());
+  linear_hold_max_velocity_ =
+    std::abs(get_node()->get_parameter("linear_hold_max_velocity").as_double());
+  linear_command_threshold_ =
+    std::max(0.0, get_node()->get_parameter("linear_command_threshold").as_double());
 
   if (!validateParameters()) {
     return controller_interface::CallbackReturn::ERROR;
@@ -142,6 +160,7 @@ controller_interface::CallbackReturn AlphaCartesianVelocityController::on_activa
   const rclcpp_lifecycle::State &)
 {
   controller_active_ = true;
+  resetLinearPoseHold();
   command_buffer_.writeFromNonRT(nullptr);
   writeZeroCommands();
   return controller_interface::CallbackReturn::SUCCESS;
@@ -151,13 +170,14 @@ controller_interface::CallbackReturn AlphaCartesianVelocityController::on_deacti
   const rclcpp_lifecycle::State &)
 {
   controller_active_ = false;
+  resetLinearPoseHold();
   writeZeroCommands();
   return controller_interface::CallbackReturn::SUCCESS;
 }
 
 controller_interface::return_type AlphaCartesianVelocityController::update(
   const rclcpp::Time & time,
-  const rclcpp::Duration &)
+  const rclcpp::Duration & period)
 {
   if (!controller_active_) {
     return controller_interface::return_type::OK;
@@ -166,6 +186,7 @@ controller_interface::return_type AlphaCartesianVelocityController::update(
   const auto command_handle = command_buffer_.readFromRT();
   const std::shared_ptr<Command> command = command_handle ? *command_handle : nullptr;
   if (!command) {
+    resetLinearPoseHold();
     writeZeroCommands();
     return controller_interface::return_type::OK;
   }
@@ -176,6 +197,7 @@ controller_interface::return_type AlphaCartesianVelocityController::update(
       *get_node()->get_clock(),
       2000,
       "Alpha cartesian velocity command timed out; writing zero velocities");
+    resetLinearPoseHold();
     writeZeroCommands();
     return controller_interface::return_type::OK;
   }
@@ -190,6 +212,20 @@ controller_interface::return_type AlphaCartesianVelocityController::update(
   if (!fillChainPositions(tip_chain_, q)) {
     writeZeroCommands();
     return controller_interface::return_type::OK;
+  }
+
+  Eigen::Vector3d current_tip_position_base = Eigen::Vector3d::Zero();
+  if (linear_pose_hold_enabled_) {
+    if (!computeTipPosition(current_tip_position_base)) {
+      writeZeroCommands();
+      return controller_interface::return_type::OK;
+    }
+    linear_velocity_base = applyLinearPoseHold(
+      linear_velocity_base,
+      current_tip_position_base,
+      std::max(0.0, period.seconds()));
+  } else {
+    resetLinearPoseHold();
   }
 
   KDL::Jacobian jacobian(tip_chain_.joint_names.size());
@@ -444,6 +480,84 @@ bool AlphaCartesianVelocityController::computeLinearVelocityInBase(
   return true;
 }
 
+bool AlphaCartesianVelocityController::computeTipPosition(
+  Eigen::Vector3d & tip_position_base) const
+{
+  KDL::JntArray q(tip_chain_.joint_names.size());
+  if (!fillChainPositions(tip_chain_, q)) {
+    return false;
+  }
+
+  KDL::Frame tip_frame;
+  if (tip_chain_.fk_solver->JntToCart(q, tip_frame) < 0) {
+    RCLCPP_WARN_THROTTLE(
+      get_node()->get_logger(),
+      *get_node()->get_clock(),
+      2000,
+      "Failed to compute Alpha tip pose; writing zero velocities");
+    return false;
+  }
+
+  tip_position_base = Eigen::Vector3d(
+    tip_frame.p.x(),
+    tip_frame.p.y(),
+    tip_frame.p.z());
+  return true;
+}
+
+Eigen::Vector3d AlphaCartesianVelocityController::applyLinearPoseHold(
+  const Eigen::Vector3d & feedforward_velocity,
+  const Eigen::Vector3d & current_tip_position,
+  double period_sec)
+{
+  if (!linear_hold_initialized_) {
+    linear_hold_target_base_ = current_tip_position;
+    linear_hold_integral_.setZero();
+    linear_hold_last_error_.setZero();
+    linear_hold_initialized_ = true;
+  }
+
+  Eigen::Vector3d output_velocity = feedforward_velocity;
+  const double safe_period = std::max(0.0, period_sec);
+
+  for (Eigen::Index axis = 0; axis < 3; ++axis) {
+    const bool axis_has_feedforward =
+      std::abs(feedforward_velocity(axis)) > linear_command_threshold_;
+
+    if (axis_has_feedforward) {
+      linear_hold_target_base_(axis) = current_tip_position(axis);
+      linear_hold_integral_(axis) = 0.0;
+      linear_hold_last_error_(axis) = 0.0;
+      continue;
+    }
+
+    const double error = linear_hold_target_base_(axis) - current_tip_position(axis);
+    if (safe_period > 0.0) {
+      linear_hold_integral_(axis) += error * safe_period;
+      linear_hold_integral_(axis) = std::clamp(
+        linear_hold_integral_(axis),
+        -linear_hold_integral_limit_,
+        linear_hold_integral_limit_);
+    }
+
+    const double derivative =
+      safe_period > 0.0 ? (error - linear_hold_last_error_(axis)) / safe_period : 0.0;
+    linear_hold_last_error_(axis) = error;
+
+    const double feedback =
+      linear_hold_kp_ * error +
+      linear_hold_ki_ * linear_hold_integral_(axis) +
+      linear_hold_kd_ * derivative;
+
+    output_velocity(axis) += std::clamp(
+      feedback,
+      -linear_hold_max_velocity_,
+      linear_hold_max_velocity_);
+  }
+
+  return output_velocity;
+}
+
 Eigen::MatrixXd AlphaCartesianVelocityController::dampedPseudoInverse(
   const Eigen::MatrixXd & jacobian) const
 {
@@ -500,6 +614,14 @@ bool AlphaCartesianVelocityController::validateParameters() const
     }
   }
   return true;
+}
+
+void AlphaCartesianVelocityController::resetLinearPoseHold()
+{
+  linear_hold_initialized_ = false;
+  linear_hold_target_base_.setZero();
+  linear_hold_integral_.setZero();
+  linear_hold_last_error_.setZero();
 }
 
 void AlphaCartesianVelocityController::writeZeroCommands()

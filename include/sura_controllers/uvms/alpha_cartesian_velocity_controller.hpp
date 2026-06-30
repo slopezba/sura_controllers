@@ -63,8 +63,14 @@ private:
   bool computeLinearVelocityInBase(
     const TwistStampedMsg & command,
     Eigen::Vector3d & linear_velocity_base) const;
+  bool computeTipPosition(Eigen::Vector3d & tip_position_base) const;
+  Eigen::Vector3d applyLinearPoseHold(
+    const Eigen::Vector3d & feedforward_velocity,
+    const Eigen::Vector3d & current_tip_position,
+    double period_sec);
   Eigen::MatrixXd dampedPseudoInverse(const Eigen::MatrixXd & jacobian) const;
   bool validateParameters() const;
+  void resetLinearPoseHold();
   void writeZeroCommands();
   double clampJointVelocity(const std::string & joint_name, double value) const;
   int jointIndex(const std::string & joint_name) const;
@@ -94,6 +100,17 @@ private:
   double dls_lambda_{0.05};
   double command_timeout_sec_{0.5};
   double robot_description_wait_timeout_sec_{3.0};
+  bool linear_pose_hold_enabled_{true};
+  double linear_hold_kp_{1.0};
+  double linear_hold_ki_{0.0};
+  double linear_hold_kd_{0.0};
+  double linear_hold_integral_limit_{0.05};
+  double linear_hold_max_velocity_{0.03};
+  double linear_command_threshold_{1e-4};
+  bool linear_hold_initialized_{false};
+  Eigen::Vector3d linear_hold_target_base_{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d linear_hold_integral_{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d linear_hold_last_error_{Eigen::Vector3d::Zero()};
   bool controller_active_{false};
 };
 
