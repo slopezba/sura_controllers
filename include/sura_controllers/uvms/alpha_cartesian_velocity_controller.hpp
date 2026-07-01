@@ -7,6 +7,7 @@
 
 #include "controller_interface/controller_interface.hpp"
 #include "Eigen/Dense"
+#include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
 #include "kdl/chain.hpp"
 #include "kdl/chainfksolverpos_recursive.hpp"
@@ -14,6 +15,7 @@
 #include "kdl/tree.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "realtime_tools/realtime_buffer.hpp"
+#include "realtime_tools/realtime_publisher.hpp"
 
 namespace sura_controllers::uvms
 {
@@ -41,6 +43,7 @@ public:
 
 private:
   using TwistStampedMsg = geometry_msgs::msg::TwistStamped;
+  using PoseStampedMsg = geometry_msgs::msg::PoseStamped;
 
   struct Command
   {
@@ -63,11 +66,13 @@ private:
   bool computeLinearVelocityInBase(
     const TwistStampedMsg & command,
     Eigen::Vector3d & linear_velocity_base) const;
+  bool computeTipFrame(KDL::Frame & tip_frame) const;
   bool computeTipPosition(Eigen::Vector3d & tip_position_base) const;
   Eigen::Vector3d applyLinearPoseHold(
     const Eigen::Vector3d & feedforward_velocity,
     const Eigen::Vector3d & current_tip_position,
     double period_sec);
+  void publishEndEffectorPose(const rclcpp::Time & time, const KDL::Frame & tip_frame);
   Eigen::MatrixXd dampedPseudoInverse(const Eigen::MatrixXd & jacobian) const;
   bool validateParameters() const;
   void resetLinearPoseHold();
@@ -77,6 +82,9 @@ private:
   int chainJointIndex(const std::string & joint_name) const;
 
   rclcpp::Subscription<TwistStampedMsg>::SharedPtr command_sub_;
+  rclcpp::Publisher<PoseStampedMsg>::SharedPtr end_effector_pose_pub_;
+  std::shared_ptr<realtime_tools::RealtimePublisher<PoseStampedMsg>>
+  end_effector_pose_rt_pub_;
   rclcpp::SyncParametersClient::SharedPtr remote_param_client_;
   realtime_tools::RealtimeBuffer<std::shared_ptr<Command>> command_buffer_;
 
@@ -85,6 +93,7 @@ private:
   std::string robot_description_source_node_{"/robot_state_publisher"};
   std::string base_frame_;
   std::string tip_frame_;
+  std::string end_effector_pose_topic_{"~/end_effector_pose"};
   std::string angular_y_joint_;
   std::string angular_z_joint_;
 
@@ -107,6 +116,8 @@ private:
   double linear_hold_integral_limit_{0.05};
   double linear_hold_max_velocity_{0.03};
   double linear_command_threshold_{1e-4};
+  double end_effector_pose_publish_rate_{20.0};
+  int64_t last_end_effector_pose_publish_time_ns_{0};
   bool linear_hold_initialized_{false};
   Eigen::Vector3d linear_hold_target_base_{Eigen::Vector3d::Zero()};
   Eigen::Vector3d linear_hold_integral_{Eigen::Vector3d::Zero()};

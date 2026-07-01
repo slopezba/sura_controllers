@@ -39,6 +39,8 @@ controller_interface::CallbackReturn AlphaCartesianVelocityController::on_init()
     auto_declare<double>("robot_description_wait_timeout_sec", 3.0);
     auto_declare<std::string>("base_frame", "");
     auto_declare<std::string>("tip_frame", "");
+    auto_declare<std::string>("end_effector_pose_topic", "~/end_effector_pose");
+    auto_declare<double>("end_effector_pose_publish_rate", 20.0);
     auto_declare<std::vector<std::string>>("joints", {});
     auto_declare<std::vector<std::string>>("ik_joints", {});
     auto_declare<std::string>("angular_y_joint", "");
@@ -98,6 +100,9 @@ controller_interface::CallbackReturn AlphaCartesianVelocityController::on_config
     get_node()->get_parameter("robot_description_wait_timeout_sec").as_double();
   base_frame_ = get_node()->get_parameter("base_frame").as_string();
   tip_frame_ = get_node()->get_parameter("tip_frame").as_string();
+  end_effector_pose_topic_ = get_node()->get_parameter("end_effector_pose_topic").as_string();
+  end_effector_pose_publish_rate_ =
+    get_node()->get_parameter("end_effector_pose_publish_rate").as_double();
   joints_ = get_node()->get_parameter("joints").as_string_array();
   ik_joints_ = get_node()->get_parameter("ik_joints").as_string_array();
   angular_y_joint_ = get_node()->get_parameter("angular_y_joint").as_string();
@@ -148,11 +153,19 @@ controller_interface::CallbackReturn AlphaCartesianVelocityController::on_config
       command_buffer_.writeFromNonRT(command);
     });
 
+  end_effector_pose_pub_ = get_node()->create_publisher<PoseStampedMsg>(
+    end_effector_pose_topic_,
+    rclcpp::SystemDefaultsQoS());
+  end_effector_pose_rt_pub_ =
+    std::make_shared<realtime_tools::RealtimePublisher<PoseStampedMsg>>(
+    end_effector_pose_pub_);
+
   RCLCPP_INFO(
     get_node()->get_logger(),
-    "Configured AlphaCartesianVelocityController for %s -> %s",
+    "Configured AlphaCartesianVelocityController for %s -> %s, publishing tip pose on '%s'",
     base_frame_.c_str(),
-    tip_frame_.c_str());
+    tip_frame_.c_str(),
+    end_effector_pose_topic_.c_str());
   return controller_interface::CallbackReturn::SUCCESS;
 }
 
@@ -161,6 +174,7 @@ controller_interface::CallbackReturn AlphaCartesianVelocityController::on_activa
 {
   controller_active_ = true;
   resetLinearPoseHold();
+  last_end_effector_pose_publish_time_ns_ = 0;
   command_buffer_.writeFromNonRT(nullptr);
   writeZeroCommands();
   return controller_interface::CallbackReturn::SUCCESS;
@@ -171,6 +185,7 @@ controller_interface::CallbackReturn AlphaCartesianVelocityController::on_deacti
 {
   controller_active_ = false;
   resetLinearPoseHold();
+  last_end_effector_pose_publish_time_ns_ = 0;
   writeZeroCommands();
   return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -182,6 +197,24 @@ controller_interface::return_type AlphaCartesianVelocityController::update(
   if (!controller_active_) {
     return controller_interface::return_type::OK;
   }
+
+  KDL::JntArray q(tip_chain_.joint_names.size());
+  if (!fillChainPositions(tip_chain_, q)) {
+    writeZeroCommands();
+    return controller_interface::return_type::OK;
+  }
+
+  KDL::Frame tip_frame;
+  if (tip_chain_.fk_solver->JntToCart(q, tip_frame) < 0) {
+    RCLCPP_WARN_THROTTLE(
+      get_node()->get_logger(),
+      *get_node()->get_clock(),
+      2000,
+      "Failed to compute Alpha tip pose; writing zero velocities");
+    writeZeroCommands();
+    return controller_interface::return_type::OK;
+  }
+  publishEndEffectorPose(time, tip_frame);
 
   const auto command_handle = command_buffer_.readFromRT();
   const std::shared_ptr<Command> command = command_handle ? *command_handle : nullptr;
@@ -208,18 +241,11 @@ controller_interface::return_type AlphaCartesianVelocityController::update(
     return controller_interface::return_type::OK;
   }
 
-  KDL::JntArray q(tip_chain_.joint_names.size());
-  if (!fillChainPositions(tip_chain_, q)) {
-    writeZeroCommands();
-    return controller_interface::return_type::OK;
-  }
-
-  Eigen::Vector3d current_tip_position_base = Eigen::Vector3d::Zero();
   if (linear_pose_hold_enabled_) {
-    if (!computeTipPosition(current_tip_position_base)) {
-      writeZeroCommands();
-      return controller_interface::return_type::OK;
-    }
+    const Eigen::Vector3d current_tip_position_base(
+      tip_frame.p.x(),
+      tip_frame.p.y(),
+      tip_frame.p.z());
     linear_velocity_base = applyLinearPoseHold(
       linear_velocity_base,
       current_tip_position_base,
@@ -480,21 +506,30 @@ bool AlphaCartesianVelocityController::computeLinearVelocityInBase(
   return true;
 }
 
-bool AlphaCartesianVelocityController::computeTipPosition(
-  Eigen::Vector3d & tip_position_base) const
+bool AlphaCartesianVelocityController::computeTipFrame(KDL::Frame & tip_frame) const
 {
   KDL::JntArray q(tip_chain_.joint_names.size());
   if (!fillChainPositions(tip_chain_, q)) {
     return false;
   }
 
-  KDL::Frame tip_frame;
   if (tip_chain_.fk_solver->JntToCart(q, tip_frame) < 0) {
     RCLCPP_WARN_THROTTLE(
       get_node()->get_logger(),
       *get_node()->get_clock(),
       2000,
       "Failed to compute Alpha tip pose; writing zero velocities");
+    return false;
+  }
+
+  return true;
+}
+
+bool AlphaCartesianVelocityController::computeTipPosition(
+  Eigen::Vector3d & tip_position_base) const
+{
+  KDL::Frame tip_frame;
+  if (!computeTipFrame(tip_frame)) {
     return false;
   }
 
@@ -558,6 +593,51 @@ Eigen::Vector3d AlphaCartesianVelocityController::applyLinearPoseHold(
   return output_velocity;
 }
 
+void AlphaCartesianVelocityController::publishEndEffectorPose(
+  const rclcpp::Time & time,
+  const KDL::Frame & tip_frame)
+{
+  if (!end_effector_pose_rt_pub_) {
+    return;
+  }
+
+  const int64_t now_ns = time.nanoseconds();
+  if (
+    end_effector_pose_publish_rate_ > 0.0 &&
+    last_end_effector_pose_publish_time_ns_ != 0)
+  {
+    const double elapsed =
+      static_cast<double>(now_ns - last_end_effector_pose_publish_time_ns_) * 1e-9;
+    if (elapsed < (1.0 / end_effector_pose_publish_rate_)) {
+      return;
+    }
+  }
+
+  if (!end_effector_pose_rt_pub_->trylock()) {
+    return;
+  }
+
+  auto & msg = end_effector_pose_rt_pub_->msg_;
+  msg.header.stamp = time;
+  msg.header.frame_id = base_frame_;
+  msg.pose.position.x = tip_frame.p.x();
+  msg.pose.position.y = tip_frame.p.y();
+  msg.pose.position.z = tip_frame.p.z();
+
+  double qx = 0.0;
+  double qy = 0.0;
+  double qz = 0.0;
+  double qw = 1.0;
+  tip_frame.M.GetQuaternion(qx, qy, qz, qw);
+  msg.pose.orientation.x = qx;
+  msg.pose.orientation.y = qy;
+  msg.pose.orientation.z = qz;
+  msg.pose.orientation.w = qw;
+
+  last_end_effector_pose_publish_time_ns_ = now_ns;
+  end_effector_pose_rt_pub_->unlockAndPublish();
+}
+
 Eigen::MatrixXd AlphaCartesianVelocityController::dampedPseudoInverse(
   const Eigen::MatrixXd & jacobian) const
 {
@@ -590,6 +670,18 @@ bool AlphaCartesianVelocityController::validateParameters() const
   }
   if (command_timeout_sec_ <= 0.0) {
     RCLCPP_ERROR(get_node()->get_logger(), "Parameter 'command_timeout_sec' must be positive");
+    return false;
+  }
+  if (end_effector_pose_topic_.empty()) {
+    RCLCPP_ERROR(
+      get_node()->get_logger(),
+      "Parameter 'end_effector_pose_topic' must not be empty");
+    return false;
+  }
+  if (end_effector_pose_publish_rate_ < 0.0) {
+    RCLCPP_ERROR(
+      get_node()->get_logger(),
+      "Parameter 'end_effector_pose_publish_rate' must be zero or positive");
     return false;
   }
   if (angular_y_joint_.empty() || angular_z_joint_.empty()) {
