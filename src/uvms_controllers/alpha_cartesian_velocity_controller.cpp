@@ -49,12 +49,14 @@ controller_interface::CallbackReturn AlphaCartesianVelocityController::on_init()
     auto_declare<double>("dls_lambda", 0.05);
     auto_declare<double>("command_timeout_sec", 0.5);
     auto_declare<bool>("linear_pose_hold_enabled", true);
+    auto_declare<bool>("linear_hold_active_command_only", false);
     auto_declare<double>("linear_hold_kp", 1.0);
     auto_declare<double>("linear_hold_ki", 0.0);
     auto_declare<double>("linear_hold_kd", 0.0);
     auto_declare<double>("linear_hold_integral_limit", 0.05);
     auto_declare<double>("linear_hold_max_velocity", 0.03);
     auto_declare<double>("linear_command_threshold", 1e-4);
+    auto_declare<double>("angular_command_threshold", 1e-4);
   } catch (const std::exception & e) {
     RCLCPP_ERROR(get_node()->get_logger(), "Exception in on_init: %s", e.what());
     return controller_interface::CallbackReturn::ERROR;
@@ -112,6 +114,8 @@ controller_interface::CallbackReturn AlphaCartesianVelocityController::on_config
   command_timeout_sec_ = get_node()->get_parameter("command_timeout_sec").as_double();
   linear_pose_hold_enabled_ =
     get_node()->get_parameter("linear_pose_hold_enabled").as_bool();
+  linear_hold_active_command_only_ =
+    get_node()->get_parameter("linear_hold_active_command_only").as_bool();
   linear_hold_kp_ = get_node()->get_parameter("linear_hold_kp").as_double();
   linear_hold_ki_ = get_node()->get_parameter("linear_hold_ki").as_double();
   linear_hold_kd_ = get_node()->get_parameter("linear_hold_kd").as_double();
@@ -121,6 +125,8 @@ controller_interface::CallbackReturn AlphaCartesianVelocityController::on_config
     std::abs(get_node()->get_parameter("linear_hold_max_velocity").as_double());
   linear_command_threshold_ =
     std::max(0.0, get_node()->get_parameter("linear_command_threshold").as_double());
+  angular_command_threshold_ =
+    std::max(0.0, get_node()->get_parameter("angular_command_threshold").as_double());
 
   if (!validateParameters()) {
     return controller_interface::CallbackReturn::ERROR;
@@ -246,6 +252,15 @@ controller_interface::return_type AlphaCartesianVelocityController::update(
       tip_frame.p.x(),
       tip_frame.p.y(),
       tip_frame.p.z());
+
+    if (linear_hold_active_command_only_ &&
+      !hasActiveCartesianCommand(command->msg, linear_velocity_base))
+    {
+      captureLinearPoseHoldTarget(current_tip_position_base);
+      writeZeroCommands();
+      return controller_interface::return_type::OK;
+    }
+
     linear_velocity_base = applyLinearPoseHold(
       linear_velocity_base,
       current_tip_position_base,
@@ -591,6 +606,29 @@ Eigen::Vector3d AlphaCartesianVelocityController::applyLinearPoseHold(
   }
 
   return output_velocity;
+}
+
+bool AlphaCartesianVelocityController::hasActiveCartesianCommand(
+  const TwistStampedMsg & command,
+  const Eigen::Vector3d & linear_velocity_base) const
+{
+  for (Eigen::Index axis = 0; axis < 3; ++axis) {
+    if (std::abs(linear_velocity_base(axis)) > linear_command_threshold_) {
+      return true;
+    }
+  }
+
+  return std::abs(command.twist.angular.y) > angular_command_threshold_ ||
+         std::abs(command.twist.angular.z) > angular_command_threshold_;
+}
+
+void AlphaCartesianVelocityController::captureLinearPoseHoldTarget(
+  const Eigen::Vector3d & current_tip_position)
+{
+  linear_hold_target_base_ = current_tip_position;
+  linear_hold_integral_.setZero();
+  linear_hold_last_error_.setZero();
+  linear_hold_initialized_ = true;
 }
 
 void AlphaCartesianVelocityController::publishEndEffectorPose(

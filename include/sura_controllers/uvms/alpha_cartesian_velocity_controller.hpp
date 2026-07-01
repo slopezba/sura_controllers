@@ -72,6 +72,10 @@ private:
     const Eigen::Vector3d & feedforward_velocity,
     const Eigen::Vector3d & current_tip_position,
     double period_sec);
+  bool hasActiveCartesianCommand(
+    const TwistStampedMsg & command,
+    const Eigen::Vector3d & linear_velocity_base) const;
+  void captureLinearPoseHoldTarget(const Eigen::Vector3d & current_tip_position);
   void publishEndEffectorPose(const rclcpp::Time & time, const KDL::Frame & tip_frame);
   Eigen::MatrixXd dampedPseudoInverse(const Eigen::MatrixXd & jacobian) const;
   bool validateParameters() const;
@@ -110,12 +114,14 @@ private:
   double command_timeout_sec_{0.5};
   double robot_description_wait_timeout_sec_{3.0};
   bool linear_pose_hold_enabled_{true};
+  bool linear_hold_active_command_only_{false};
   double linear_hold_kp_{1.0};
   double linear_hold_ki_{0.0};
   double linear_hold_kd_{0.0};
   double linear_hold_integral_limit_{0.05};
   double linear_hold_max_velocity_{0.03};
   double linear_command_threshold_{1e-4};
+  double angular_command_threshold_{1e-4};
   double end_effector_pose_publish_rate_{20.0};
   int64_t last_end_effector_pose_publish_time_ns_{0};
   bool linear_hold_initialized_{false};
