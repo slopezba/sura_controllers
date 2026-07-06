@@ -19,6 +19,7 @@ find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(urdf REQUIRED)
 find_package(kdl_parser REQUIRED)
+find_package(lifecycle_msgs REQUIRED)
 find_package(orocos_kdl REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(osqp_vendor REQUIRED)
@@ -43,9 +44,18 @@ add_library(${PROJECT_NAME} SHARED
   src/uvms_controllers/alpha_cartesian_velocity_controller.cpp
 )
 
+add_executable(controller_arbitrator
+  src/controller_arbitrator.cpp
+)
+
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
+target_compile_features(controller_arbitrator PUBLIC cxx_std_17)
 
 target_include_directories(${PROJECT_NAME} PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_include_directories(controller_arbitrator PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
@@ -73,9 +83,18 @@ ament_target_dependencies(${PROJECT_NAME}
   sura_msgs
   urdf
   kdl_parser
+  lifecycle_msgs
   orocos_kdl
   tf2
   visualization_msgs
+)
+
+ament_target_dependencies(controller_arbitrator
+  geometry_msgs
+  lifecycle_msgs
+  rclcpp
+  rclcpp_lifecycle
+  sura_msgs
 )
 
 pluginlib_export_plugin_description_file(
@@ -89,6 +108,11 @@ install(
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
+)
+
+install(
+  TARGETS controller_arbitrator
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 install(
@@ -118,6 +142,7 @@ ament_export_dependencies(
   sura_msgs
   urdf
   kdl_parser
+  lifecycle_msgs
   orocos_kdl
   tf2
   yaml-cpp

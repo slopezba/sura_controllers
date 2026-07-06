@@ -23,6 +23,7 @@
   <depend>osqp_vendor</depend>
   <depend>urdf</depend>
   <depend>kdl_parser</depend>
+  <depend>lifecycle_msgs</depend>
   <depend>orocos_kdl</depend>
   <depend>sura_msgs</depend>
   <depend>tinyxml2</depend>
