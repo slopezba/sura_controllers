@@ -70,6 +70,7 @@ controller_interface::CallbackReturn PositionHoldController::on_init()
     auto_declare<std::string>("output_topic", "position_hold/output");
     auto_declare<std::string>("pid_terms_topic", "position_hold/pid_terms");
     auto_declare<std::string>("body_velocity_controller_name", "body_velocity");
+    auto_declare<std::string>("body_velocity_setpoint_topic", "body_velocity/setpoint");
     auto_declare<std::string>("setpoint_frame_id", "world_ned");
 
     auto_declare<double>("kp_x", 0.0);
@@ -118,18 +119,8 @@ controller_interface::CallbackReturn PositionHoldController::on_init()
 controller_interface::InterfaceConfiguration
 PositionHoldController::command_interface_configuration() const
 {
-  const std::string prefix = body_velocity_controller_name_;
-
   return {
-    controller_interface::interface_configuration_type::INDIVIDUAL,
-    {
-      prefix + "/linear.x",
-      prefix + "/linear.y",
-      prefix + "/linear.z",
-      prefix + "/angular.x",
-      prefix + "/angular.y",
-      prefix + "/angular.z"
-    }
+    controller_interface::interface_configuration_type::NONE
   };
 }
 
@@ -151,6 +142,8 @@ controller_interface::CallbackReturn PositionHoldController::on_configure(
   pid_terms_topic_ = get_node()->get_parameter("pid_terms_topic").as_string();
   body_velocity_controller_name_ =
     get_node()->get_parameter("body_velocity_controller_name").as_string();
+  body_velocity_setpoint_topic_ =
+    get_node()->get_parameter("body_velocity_setpoint_topic").as_string();
   setpoint_frame_id_ = get_node()->get_parameter("setpoint_frame_id").as_string();
   debug_enabled_ = get_node()->get_parameter("debug.enabled").as_bool();
   debug_topic_ = get_node()->get_parameter("debug.topic").as_string();
@@ -228,6 +221,11 @@ controller_interface::CallbackReturn PositionHoldController::on_configure(
     rclcpp::SystemDefaultsQoS());
   setpoint_rt_pub_ =
     std::make_shared<realtime_tools::RealtimePublisher<PoseStampedMsg>>(setpoint_pub_);
+  body_velocity_setpoint_pub_ = get_node()->create_publisher<TwistMsg>(
+    body_velocity_setpoint_topic_,
+    rclcpp::SystemDefaultsQoS());
+  body_velocity_setpoint_rt_pub_ =
+    std::make_shared<realtime_tools::RealtimePublisher<TwistMsg>>(body_velocity_setpoint_pub_);
   output_pub_ = get_node()->create_publisher<TwistMsg>(
     output_topic_,
     rclcpp::SystemDefaultsQoS());
@@ -271,9 +269,10 @@ controller_interface::CallbackReturn PositionHoldController::on_configure(
 
   RCLCPP_INFO(
     get_node()->get_logger(),
-    "Configured PositionHoldController with setpoint topic '%s' and feedforward topic '%s'",
+    "Configured PositionHoldController with setpoint topic '%s', feedforward topic '%s', and body velocity setpoint topic '%s'",
     setpoint_topic_.c_str(),
-    feedforward_topic_.c_str());
+    feedforward_topic_.c_str(),
+    body_velocity_setpoint_topic_.c_str());
 
   return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -295,9 +294,7 @@ controller_interface::CallbackReturn PositionHoldController::on_activate(
     std::numeric_limits<double>::quiet_NaN());
   resetDebugStats();
 
-  for (auto & command_interface : command_interfaces_) {
-    command_interface.set_value(0.0);
-  }
+  publishZeroBodyVelocitySetpoint();
 
   return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -317,9 +314,7 @@ controller_interface::CallbackReturn PositionHoldController::on_deactivate(
     reference_interfaces_.end(),
     std::numeric_limits<double>::quiet_NaN());
 
-  for (auto & command_interface : command_interfaces_) {
-    command_interface.set_value(0.0);
-  }
+  publishZeroBodyVelocitySetpoint();
 
   if (debug_enabled_ && debug_pub_) {
     publishDebugStats();
@@ -556,6 +551,25 @@ void PositionHoldController::publishTelemetry(
   }
 }
 
+void PositionHoldController::publishBodyVelocitySetpoint(const TwistMsg & command)
+{
+  if (!body_velocity_setpoint_rt_pub_) {
+    return;
+  }
+
+  if (body_velocity_setpoint_rt_pub_->trylock()) {
+    body_velocity_setpoint_rt_pub_->msg_ = command;
+    body_velocity_setpoint_rt_pub_->unlockAndPublish();
+  }
+}
+
+void PositionHoldController::publishZeroBodyVelocitySetpoint()
+{
+  if (body_velocity_setpoint_pub_) {
+    body_velocity_setpoint_pub_->publish(TwistMsg{});
+  }
+}
+
 void PositionHoldController::updateReferenceInterfacesFromSetpoint()
 {
   if (reference_interfaces_.size() != 6) {
@@ -636,11 +650,8 @@ controller_interface::return_type PositionHoldController::update_and_write_comma
   auto navigator_msg = navigator_buffer_.readFromRT();
 
   if (!navigator_msg || !(*navigator_msg)) {
+    publishBodyVelocitySetpoint(TwistMsg{});
     return controller_interface::return_type::OK;
-  }
-
-  if (command_interfaces_.size() != 6) {
-    return controller_interface::return_type::ERROR;
   }
 
   if (!setpoint_initialized_) {
@@ -759,12 +770,14 @@ controller_interface::return_type PositionHoldController::update_and_write_comma
     effective_feedforward.angular.z +
     pid_terms[5].proportional + pid_terms[5].integral + pid_terms[5].derivative;
 
-  command_interfaces_[0].set_value(linear_x_command);
-  command_interfaces_[1].set_value(linear_y_command);
-  command_interfaces_[2].set_value(linear_z_command);
-  command_interfaces_[3].set_value(angular_x_command);
-  command_interfaces_[4].set_value(angular_y_command);
-  command_interfaces_[5].set_value(angular_z_command);
+  TwistMsg body_velocity_command;
+  body_velocity_command.linear.x = linear_x_command;
+  body_velocity_command.linear.y = linear_y_command;
+  body_velocity_command.linear.z = linear_z_command;
+  body_velocity_command.angular.x = angular_x_command;
+  body_velocity_command.angular.y = angular_y_command;
+  body_velocity_command.angular.z = angular_z_command;
+  publishBodyVelocitySetpoint(body_velocity_command);
 
   publishTelemetry(
     linear_x_command,

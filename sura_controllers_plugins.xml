@@ -38,7 +38,7 @@
     name="sura_controllers/auv/PositionHoldController"
     type="sura_controllers::auv::PositionHoldController"
     base_class_type="controller_interface::ChainableControllerInterface">
-    <description>AUV position hold controller chained into the body velocity controller</description>
+    <description>AUV position hold controller publishing body velocity setpoints</description>
   </class>
 
   <class

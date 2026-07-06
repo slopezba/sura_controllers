@@ -113,6 +113,8 @@ private:
     double angular_y,
     double angular_z,
     const std::array<PidTerms, 6> & pid_terms);
+  void publishBodyVelocitySetpoint(const TwistMsg & command);
+  void publishZeroBodyVelocitySetpoint();
   void updateReferenceInterfacesFromSetpoint();
   void resetDebugStats();
   void publishDebugStats();
@@ -121,10 +123,12 @@ private:
   rclcpp::Subscription<TwistMsg>::SharedPtr feedforward_sub_;
   rclcpp::Subscription<NavigatorMsg>::SharedPtr navigator_sub_;
   rclcpp::Publisher<PoseStampedMsg>::SharedPtr setpoint_pub_;
+  rclcpp::Publisher<TwistMsg>::SharedPtr body_velocity_setpoint_pub_;
   rclcpp::Publisher<TwistMsg>::SharedPtr output_pub_;
   rclcpp::Publisher<Float64MultiArrayMsg>::SharedPtr pid_terms_pub_;
   rclcpp::Publisher<sura_msgs::msg::ControllerDebug>::SharedPtr debug_pub_;
   std::shared_ptr<realtime_tools::RealtimePublisher<PoseStampedMsg>> setpoint_rt_pub_;
+  std::shared_ptr<realtime_tools::RealtimePublisher<TwistMsg>> body_velocity_setpoint_rt_pub_;
   std::shared_ptr<realtime_tools::RealtimePublisher<TwistMsg>> output_rt_pub_;
   std::shared_ptr<realtime_tools::RealtimePublisher<Float64MultiArrayMsg>> pid_terms_rt_pub_;
   rclcpp::TimerBase::SharedPtr debug_timer_;
@@ -142,6 +146,7 @@ private:
   std::string pid_terms_topic_;
   std::string debug_topic_;
   std::string body_velocity_controller_name_;
+  std::string body_velocity_setpoint_topic_;
   std::string setpoint_frame_id_;
   std::vector<std::string> reference_interface_names_;
   bool debug_enabled_{false};
