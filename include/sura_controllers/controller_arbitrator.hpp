@@ -94,12 +94,19 @@ private:
   void arbitrationTick();
   void removeExpiredIntents(const rclcpp::Time & now);
   std::optional<Intent> selectWinnerLocked() const;
-  void publishWinner(const Intent & intent);
+  bool hasPositionHoldVelocityModeLocked() const;
+  void publishWinner(const Intent & intent, bool position_hold_velocity_mode);
   void publishZeroIfNeeded(const std::optional<Intent> & previous_winner);
 
   void cleanupResources();
 
   std::string robot_namespace_;
+  std::string body_velocity_controller_name_{"body_velocity"};
+  std::string position_hold_controller_name_{"position_hold"};
+  std::string position_hold_temporary_controller_name_{"position_hold_temporary"};
+  std::string position_hold_reposition_controller_name_{"position_hold_reposition"};
+  std::string position_hold_feedforward_topic_;
+  std::string position_hold_reposition_feedforward_topic_;
   double arbitration_frequency_hz_{10.0};
   double command_timeout_s_{0.15};
   uint64_t sequence_counter_{0};
@@ -118,6 +125,9 @@ private:
 
   std::map<std::string, rclcpp_lifecycle::LifecyclePublisher<VelocityMsg>::SharedPtr>
   velocity_publishers_;
+  rclcpp_lifecycle::LifecyclePublisher<VelocityMsg>::SharedPtr position_hold_feedforward_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<VelocityMsg>::SharedPtr
+    position_hold_reposition_feedforward_pub_;
   std::map<std::string, rclcpp_lifecycle::LifecyclePublisher<PoseMsg>::SharedPtr>
   pose_publishers_;
   std::map<std::string, rclcpp_lifecycle::LifecyclePublisher<WrenchMsg>::SharedPtr>

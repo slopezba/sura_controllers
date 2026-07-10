@@ -16,6 +16,14 @@
 
 namespace sura_controllers::auv
 {
+namespace
+{
+int64_t steadyTimeNanoseconds()
+{
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+    std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+}  // namespace
 
 void PositionHoldController::resetDebugStats()
 {
@@ -66,6 +74,9 @@ controller_interface::CallbackReturn PositionHoldController::on_init()
   try {
     auto_declare<std::string>("setpoint_topic", "position_hold/setpoint");
     auto_declare<std::string>("feedforward_topic", "position_hold/feedforward");
+    auto_declare<std::string>(
+      "reposition_feedforward_topic",
+      "position_hold/reposition_feedforward");
     auto_declare<std::string>("navigator_topic", "navigator/navigation");
     auto_declare<std::string>("output_topic", "position_hold/output");
     auto_declare<std::string>("pid_terms_topic", "position_hold/pid_terms");
@@ -137,6 +148,8 @@ controller_interface::CallbackReturn PositionHoldController::on_configure(
 {
   setpoint_topic_ = get_node()->get_parameter("setpoint_topic").as_string();
   feedforward_topic_ = get_node()->get_parameter("feedforward_topic").as_string();
+  reposition_feedforward_topic_ =
+    get_node()->get_parameter("reposition_feedforward_topic").as_string();
   navigator_topic_ = get_node()->get_parameter("navigator_topic").as_string();
   output_topic_ = get_node()->get_parameter("output_topic").as_string();
   pid_terms_topic_ = get_node()->get_parameter("pid_terms_topic").as_string();
@@ -205,7 +218,16 @@ controller_interface::CallbackReturn PositionHoldController::on_configure(
     [this](const TwistMsg::SharedPtr msg)
     {
       feedforward_buffer_.writeFromNonRT(msg);
-      last_feedforward_time_ns_.store(get_node()->now().nanoseconds());
+      last_feedforward_time_ns_.store(steadyTimeNanoseconds());
+    });
+
+  reposition_feedforward_sub_ = get_node()->create_subscription<TwistMsg>(
+    reposition_feedforward_topic_,
+    rclcpp::SystemDefaultsQoS(),
+    [this](const TwistMsg::SharedPtr msg)
+    {
+      reposition_feedforward_buffer_.writeFromNonRT(msg);
+      last_reposition_feedforward_time_ns_.store(steadyTimeNanoseconds());
     });
 
   navigator_sub_ = get_node()->create_subscription<NavigatorMsg>(
@@ -269,9 +291,10 @@ controller_interface::CallbackReturn PositionHoldController::on_configure(
 
   RCLCPP_INFO(
     get_node()->get_logger(),
-    "Configured PositionHoldController with setpoint topic '%s', feedforward topic '%s', and body velocity setpoint topic '%s'",
+    "Configured PositionHoldController with setpoint topic '%s', temporary feedforward topic '%s', reposition feedforward topic '%s', and body velocity setpoint topic '%s'",
     setpoint_topic_.c_str(),
     feedforward_topic_.c_str(),
+    reposition_feedforward_topic_.c_str(),
     body_velocity_setpoint_topic_.c_str());
 
   return controller_interface::CallbackReturn::SUCCESS;
@@ -284,10 +307,13 @@ controller_interface::CallbackReturn PositionHoldController::on_activate(
   resetPidStates();
   current_setpoint_ = PoseStampedMsg{};
   current_feedforward_ = TwistMsg{};
+  current_reposition_feedforward_ = TwistMsg{};
   setpoint_initialized_ = false;
   feedforward_active_ = false;
+  reposition_feedforward_active_ = false;
   new_setpoint_requested_.store(false);
   last_feedforward_time_ns_.store(0);
+  last_reposition_feedforward_time_ns_.store(0);
   std::fill(
     reference_interfaces_.begin(),
     reference_interfaces_.end(),
@@ -305,10 +331,13 @@ controller_interface::CallbackReturn PositionHoldController::on_deactivate(
   controller_active_ = false;
   resetPidStates();
   current_feedforward_ = TwistMsg{};
+  current_reposition_feedforward_ = TwistMsg{};
   setpoint_initialized_ = false;
   feedforward_active_ = false;
+  reposition_feedforward_active_ = false;
   new_setpoint_requested_.store(false);
   last_feedforward_time_ns_.store(0);
+  last_reposition_feedforward_time_ns_.store(0);
   std::fill(
     reference_interfaces_.begin(),
     reference_interfaces_.end(),
@@ -631,13 +660,15 @@ bool PositionHoldController::on_set_chained_mode(bool chained_mode)
 controller_interface::return_type PositionHoldController::update_reference_from_subscribers()
 {
   auto feedforward_msg = feedforward_buffer_.readFromRT();
-
-  if (!feedforward_msg || !(*feedforward_msg)) {
-    current_feedforward_ = TwistMsg{};
-    return controller_interface::return_type::OK;
+  if (feedforward_msg && *feedforward_msg) {
+    current_feedforward_ = *(*feedforward_msg);
   }
 
-  current_feedforward_ = *(*feedforward_msg);
+  auto reposition_feedforward_msg = reposition_feedforward_buffer_.readFromRT();
+  if (reposition_feedforward_msg && *reposition_feedforward_msg) {
+    current_reposition_feedforward_ = *(*reposition_feedforward_msg);
+  }
+
   return controller_interface::return_type::OK;
 }
 
@@ -654,6 +685,8 @@ controller_interface::return_type PositionHoldController::update_and_write_comma
     return controller_interface::return_type::OK;
   }
 
+  update_reference_from_subscribers();
+
   if (!setpoint_initialized_) {
     setSetpointFromNavigator(*(*navigator_msg));
     publishCurrentSetpoint(time);
@@ -665,10 +698,12 @@ controller_interface::return_type PositionHoldController::update_and_write_comma
     publishCurrentSetpoint(time);
   }
 
+  const int64_t now_feedforward_time_ns = steadyTimeNanoseconds();
+
   const int64_t last_feedforward_time_ns = last_feedforward_time_ns_.load();
   const bool feedforward_is_fresh =
     last_feedforward_time_ns > 0 &&
-    ((time.nanoseconds() - last_feedforward_time_ns) * 1e-9) <= feedforward_timeout_;
+    ((now_feedforward_time_ns - last_feedforward_time_ns) * 1e-9) <= feedforward_timeout_;
 
   TwistMsg effective_feedforward;
   if (feedforward_is_fresh) {
@@ -685,11 +720,40 @@ controller_interface::return_type PositionHoldController::update_and_write_comma
     std::abs(effective_feedforward.angular.z) > angular_feedforward_threshold_;
   const bool has_feedforward = has_linear_feedforward || has_angular_feedforward;
 
+  const int64_t last_reposition_feedforward_time_ns =
+    last_reposition_feedforward_time_ns_.load();
+  const bool reposition_feedforward_is_fresh =
+    last_reposition_feedforward_time_ns > 0 &&
+    ((now_feedforward_time_ns - last_reposition_feedforward_time_ns) * 1e-9) <=
+    feedforward_timeout_;
+
+  TwistMsg effective_reposition_feedforward;
+  if (reposition_feedforward_is_fresh) {
+    effective_reposition_feedforward = current_reposition_feedforward_;
+  }
+
+  // A temporary override has priority over manual reposition. Teleop may still be
+  // publishing direct reposition commands, but while a temporary override is active
+  // we must not rebase the hold setpoint, otherwise the vehicle will not return to
+  // the original pose.
   if (has_feedforward) {
-    setSetpointFromNavigator(*(*navigator_msg));
-    publishCurrentSetpoint(time);
-    resetPidStates();
-  } else if (feedforward_active_) {
+    effective_reposition_feedforward = TwistMsg{};
+  }
+
+  const bool has_linear_reposition_feedforward =
+    std::abs(effective_reposition_feedforward.linear.x) > linear_feedforward_threshold_ ||
+    std::abs(effective_reposition_feedforward.linear.y) > linear_feedforward_threshold_ ||
+    std::abs(effective_reposition_feedforward.linear.z) > linear_feedforward_threshold_;
+  const bool has_angular_reposition_feedforward =
+    std::abs(effective_reposition_feedforward.angular.x) > angular_feedforward_threshold_ ||
+    std::abs(effective_reposition_feedforward.angular.y) > angular_feedforward_threshold_ ||
+    std::abs(effective_reposition_feedforward.angular.z) > angular_feedforward_threshold_;
+  const bool has_reposition_feedforward =
+    has_linear_reposition_feedforward || has_angular_reposition_feedforward;
+
+  // Reposition feedforward is for manual jog/teleop. It deliberately rebases the hold
+  // setpoint to the current pose, so releasing the joystick holds the new position.
+  if (has_reposition_feedforward || reposition_feedforward_active_) {
     setSetpointFromNavigator(*(*navigator_msg));
     publishCurrentSetpoint(time);
     resetPidStates();
@@ -736,6 +800,24 @@ controller_interface::return_type PositionHoldController::update_and_write_comma
   const double dt = period.seconds();
   const auto & angular_velocity = (*navigator_msg)->body_velocity.angular;
 
+  // If a temporary override starts or ends, seed the PID previous errors with the
+  // current errors. This avoids a derivative kick when the vehicle is displaced
+  // and the hold controller starts returning to the original setpoint.
+  if (has_feedforward != feedforward_active_) {
+    x_pid_.integral = 0.0;
+    x_pid_.previous_error = position_error_body.x();
+    y_pid_.integral = 0.0;
+    y_pid_.previous_error = position_error_body.y();
+    z_pid_.integral = 0.0;
+    z_pid_.previous_error = position_error_body.z();
+    roll_pid_.integral = 0.0;
+    roll_pid_.previous_error = roll_error;
+    pitch_pid_.integral = 0.0;
+    pitch_pid_.previous_error = pitch_error;
+    yaw_pid_.integral = 0.0;
+    yaw_pid_.previous_error = yaw_error;
+  }
+
   std::array<PidTerms, 6> pid_terms;
   pid_terms[0] = computePidTerms(
     position_error_body.x(), dt, kp_x_, ki_x_, kd_x_, antiwindup_x_, x_pid_);
@@ -751,23 +833,34 @@ controller_interface::return_type PositionHoldController::update_and_write_comma
   pid_terms[5] = computePidTermsWithMeasuredRate(
     yaw_error, angular_velocity.z, dt, kp_yaw_, ki_yaw_, kd_yaw_, antiwindup_yaw_, yaw_pid_);
 
+  // While a temporary velocity override is active, suspend the hold PID completely.
+  // Otherwise the position controller fights the velocity command, which makes the
+  // vehicle crawl or oscillate around the held pose. The setpoint is still kept,
+  // so when the override disappears the PID returns the vehicle to the original pose.
+  if (has_feedforward) {
+    for (auto & terms : pid_terms) {
+      terms = PidTerms{};
+    }
+    resetPidStates();
+  }
+
   const double linear_x_command =
-    effective_feedforward.linear.x +
+    effective_feedforward.linear.x + effective_reposition_feedforward.linear.x +
     pid_terms[0].proportional + pid_terms[0].integral + pid_terms[0].derivative;
   const double linear_y_command =
-    effective_feedforward.linear.y +
+    effective_feedforward.linear.y + effective_reposition_feedforward.linear.y +
     pid_terms[1].proportional + pid_terms[1].integral + pid_terms[1].derivative;
   const double linear_z_command =
-    effective_feedforward.linear.z +
+    effective_feedforward.linear.z + effective_reposition_feedforward.linear.z +
     pid_terms[2].proportional + pid_terms[2].integral + pid_terms[2].derivative;
   const double angular_x_command =
-    effective_feedforward.angular.x +
+    effective_feedforward.angular.x + effective_reposition_feedforward.angular.x +
     pid_terms[3].proportional + pid_terms[3].integral + pid_terms[3].derivative;
   const double angular_y_command =
-    effective_feedforward.angular.y +
+    effective_feedforward.angular.y + effective_reposition_feedforward.angular.y +
     pid_terms[4].proportional + pid_terms[4].integral + pid_terms[4].derivative;
   const double angular_z_command =
-    effective_feedforward.angular.z +
+    effective_feedforward.angular.z + effective_reposition_feedforward.angular.z +
     pid_terms[5].proportional + pid_terms[5].integral + pid_terms[5].derivative;
 
   TwistMsg body_velocity_command;
@@ -789,6 +882,7 @@ controller_interface::return_type PositionHoldController::update_and_write_comma
     pid_terms);
 
   feedforward_active_ = has_feedforward;
+  reposition_feedforward_active_ = has_reposition_feedforward;
 
   if (debug_enabled_) {
     const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(

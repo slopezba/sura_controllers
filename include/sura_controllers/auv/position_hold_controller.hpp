@@ -121,6 +121,7 @@ private:
 
   rclcpp::Subscription<PoseStampedMsg>::SharedPtr setpoint_sub_;
   rclcpp::Subscription<TwistMsg>::SharedPtr feedforward_sub_;
+  rclcpp::Subscription<TwistMsg>::SharedPtr reposition_feedforward_sub_;
   rclcpp::Subscription<NavigatorMsg>::SharedPtr navigator_sub_;
   rclcpp::Publisher<PoseStampedMsg>::SharedPtr setpoint_pub_;
   rclcpp::Publisher<TwistMsg>::SharedPtr body_velocity_setpoint_pub_;
@@ -135,12 +136,14 @@ private:
 
   realtime_tools::RealtimeBuffer<std::shared_ptr<PoseStampedMsg>> setpoint_buffer_;
   realtime_tools::RealtimeBuffer<std::shared_ptr<TwistMsg>> feedforward_buffer_;
+  realtime_tools::RealtimeBuffer<std::shared_ptr<TwistMsg>> reposition_feedforward_buffer_;
   realtime_tools::RealtimeBuffer<std::shared_ptr<NavigatorMsg>> navigator_buffer_;
 
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
 
   std::string setpoint_topic_;
   std::string feedforward_topic_;
+  std::string reposition_feedforward_topic_;
   std::string navigator_topic_;
   std::string output_topic_;
   std::string pid_terms_topic_;
@@ -196,10 +199,13 @@ private:
 
   PoseStampedMsg current_setpoint_;
   TwistMsg current_feedforward_;
+  TwistMsg current_reposition_feedforward_;
   bool setpoint_initialized_{false};
   bool feedforward_active_{false};
+  bool reposition_feedforward_active_{false};
   std::atomic<bool> new_setpoint_requested_{false};
   std::atomic<int64_t> last_feedforward_time_ns_{0};
+  std::atomic<int64_t> last_reposition_feedforward_time_ns_{0};
   std::atomic<uint64_t> debug_desired_period_us_{0};
   std::atomic<uint64_t> debug_cycle_count_{0};
   std::atomic<uint64_t> debug_deadline_miss_count_{0};

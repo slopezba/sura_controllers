@@ -39,6 +39,19 @@ ControllerArbitrator::CallbackReturn ControllerArbitrator::on_configure(
   robot_namespace_ = stripSlashes(declare_parameter<std::string>("robot_namespace", "sura"));
   arbitration_frequency_hz_ = declare_parameter<double>("arbitration_frequency_hz", 10.0);
   command_timeout_s_ = declare_parameter<double>("command_timeout_s", 0.15);
+  body_velocity_controller_name_ =
+    declare_parameter<std::string>("body_velocity_controller_name", "body_velocity");
+  position_hold_controller_name_ =
+    declare_parameter<std::string>("position_hold_controller_name", "position_hold");
+  position_hold_temporary_controller_name_ = declare_parameter<std::string>(
+    "position_hold_temporary_controller_name", "position_hold_temporary");
+  position_hold_reposition_controller_name_ = declare_parameter<std::string>(
+    "position_hold_reposition_controller_name", "position_hold_reposition");
+  const auto position_hold_feedforward_topic_suffix = declare_parameter<std::string>(
+    "position_hold_feedforward_topic_suffix", "controller/position_hold/feedforward");
+  const auto position_hold_reposition_feedforward_topic_suffix = declare_parameter<std::string>(
+    "position_hold_reposition_feedforward_topic_suffix",
+    "controller/position_hold/reposition_feedforward");
 
   if (arbitration_frequency_hz_ <= 0.0) {
     RCLCPP_WARN(get_logger(), "Invalid arbitration_frequency_hz, using 10.0 Hz");
@@ -96,6 +109,33 @@ ControllerArbitrator::CallbackReturn ControllerArbitrator::on_configure(
       topic.c_str());
   }
 
+  position_hold_feedforward_topic_ = namespacedTopic(position_hold_feedforward_topic_suffix);
+  position_hold_reposition_feedforward_topic_ =
+    namespacedTopic(position_hold_reposition_feedforward_topic_suffix);
+
+  position_hold_feedforward_pub_ = create_publisher<VelocityMsg>(
+    position_hold_feedforward_topic_,
+    rclcpp::SystemDefaultsQoS());
+  position_hold_reposition_feedforward_pub_ = create_publisher<VelocityMsg>(
+    position_hold_reposition_feedforward_topic_,
+    rclcpp::SystemDefaultsQoS());
+
+  routes_[position_hold_temporary_controller_name_] =
+    ControllerRoute{IntentType::Velocity, position_hold_feedforward_topic_};
+  routes_[position_hold_reposition_controller_name_] =
+    ControllerRoute{IntentType::Velocity, position_hold_reposition_feedforward_topic_};
+
+  RCLCPP_INFO(
+    get_logger(),
+    "Position hold temporary velocity controller '%s' publishes to '%s'",
+    position_hold_temporary_controller_name_.c_str(),
+    position_hold_feedforward_topic_.c_str());
+  RCLCPP_INFO(
+    get_logger(),
+    "Position hold reposition velocity controller '%s' publishes to '%s'",
+    position_hold_reposition_controller_name_.c_str(),
+    position_hold_reposition_feedforward_topic_.c_str());
+
   velocity_sub_ = create_subscription<sura_msgs::msg::SuraVelocityCommand>(
     namespacedTopic("controller/arbitrator/velocity"),
     rclcpp::SystemDefaultsQoS(),
@@ -135,6 +175,12 @@ ControllerArbitrator::CallbackReturn ControllerArbitrator::on_activate(
   for (auto & publisher : velocity_publishers_) {
     publisher.second->on_activate();
   }
+  if (position_hold_feedforward_pub_) {
+    position_hold_feedforward_pub_->on_activate();
+  }
+  if (position_hold_reposition_feedforward_pub_) {
+    position_hold_reposition_feedforward_pub_->on_activate();
+  }
   for (auto & publisher : pose_publishers_) {
     publisher.second->on_activate();
   }
@@ -171,6 +217,12 @@ ControllerArbitrator::CallbackReturn ControllerArbitrator::on_deactivate(
   publishZeroIfNeeded(previous_winner);
   for (auto & publisher : velocity_publishers_) {
     publisher.second->on_deactivate();
+  }
+  if (position_hold_feedforward_pub_) {
+    position_hold_feedforward_pub_->on_deactivate();
+  }
+  if (position_hold_reposition_feedforward_pub_) {
+    position_hold_reposition_feedforward_pub_->on_deactivate();
   }
   for (auto & publisher : pose_publishers_) {
     publisher.second->on_deactivate();
@@ -434,10 +486,12 @@ void ControllerArbitrator::arbitrationTick()
   std::optional<Intent> winner;
   std::optional<Intent> previous_winner;
   bool should_zero_previous = false;
+  bool position_hold_velocity_mode = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     previous_winner = last_published_winner_;
     removeExpiredIntents(now());
+    position_hold_velocity_mode = hasPositionHoldVelocityModeLocked();
     winner = selectWinnerLocked();
     if (winner) {
       zero_published_after_idle_ = false;
@@ -456,7 +510,7 @@ void ControllerArbitrator::arbitrationTick()
     publishZeroIfNeeded(previous_winner);
   }
   if (winner) {
-    publishWinner(*winner);
+    publishWinner(*winner, position_hold_velocity_mode);
   }
 }
 
@@ -488,12 +542,51 @@ std::optional<ControllerArbitrator::Intent> ControllerArbitrator::selectWinnerLo
   return winner;
 }
 
-void ControllerArbitrator::publishWinner(const Intent & intent)
+bool ControllerArbitrator::hasPositionHoldVelocityModeLocked() const
+{
+  for (const auto & item : intents_) {
+    const auto & intent = item.second;
+    if (intent.controller == position_hold_controller_name_ ||
+      intent.controller == position_hold_temporary_controller_name_ ||
+      intent.controller == position_hold_reposition_controller_name_)
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+void ControllerArbitrator::publishWinner(
+  const Intent & intent,
+  bool position_hold_velocity_mode)
 {
   if (intent.type == IntentType::Velocity) {
+    const auto & velocity = std::get<VelocityMsg>(intent.payload);
+
+    if (intent.controller == position_hold_reposition_controller_name_) {
+      if (position_hold_reposition_feedforward_pub_) {
+        position_hold_reposition_feedforward_pub_->publish(velocity);
+      }
+      return;
+    }
+
+    if (intent.controller == position_hold_temporary_controller_name_) {
+      if (position_hold_feedforward_pub_) {
+        position_hold_feedforward_pub_->publish(velocity);
+      }
+      return;
+    }
+
+    if (intent.controller == body_velocity_controller_name_ && position_hold_velocity_mode) {
+      if (position_hold_feedforward_pub_) {
+        position_hold_feedforward_pub_->publish(velocity);
+      }
+      return;
+    }
+
     const auto publisher = velocity_publishers_.find(intent.controller);
     if (publisher != velocity_publishers_.end()) {
-      publisher->second->publish(std::get<VelocityMsg>(intent.payload));
+      publisher->second->publish(velocity);
     }
   } else if (intent.type == IntentType::Pose) {
     const auto publisher = pose_publishers_.find(intent.controller);
@@ -514,9 +607,32 @@ void ControllerArbitrator::publishZeroIfNeeded(const std::optional<Intent> & pre
     return;
   }
   if (previous_winner->type == IntentType::Velocity) {
+    if (previous_winner->controller == position_hold_reposition_controller_name_) {
+      if (position_hold_reposition_feedforward_pub_) {
+        position_hold_reposition_feedforward_pub_->publish(VelocityMsg{});
+      }
+      return;
+    }
+
+    if (previous_winner->controller == position_hold_temporary_controller_name_) {
+      if (position_hold_feedforward_pub_) {
+        position_hold_feedforward_pub_->publish(VelocityMsg{});
+      }
+      return;
+    }
+
     const auto publisher = velocity_publishers_.find(previous_winner->controller);
     if (publisher != velocity_publishers_.end()) {
       publisher->second->publish(VelocityMsg{});
+    }
+
+    if (previous_winner->controller == body_velocity_controller_name_) {
+      if (position_hold_feedforward_pub_) {
+        position_hold_feedforward_pub_->publish(VelocityMsg{});
+      }
+      if (position_hold_reposition_feedforward_pub_) {
+        position_hold_reposition_feedforward_pub_->publish(VelocityMsg{});
+      }
     }
   } else if (previous_winner->type == IntentType::Wrench) {
     const auto publisher = wrench_publishers_.find(previous_winner->controller);
@@ -537,6 +653,8 @@ void ControllerArbitrator::cleanupResources()
   clear_service_.reset();
   arbitration_timer_.reset();
   velocity_publishers_.clear();
+  position_hold_feedforward_pub_.reset();
+  position_hold_reposition_feedforward_pub_.reset();
   pose_publishers_.clear();
   wrench_publishers_.clear();
   routes_.clear();
