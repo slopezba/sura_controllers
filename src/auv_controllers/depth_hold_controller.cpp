@@ -866,6 +866,7 @@ controller_interface::return_type DepthHoldController::update_and_write_commands
   const double pitch_error = wrapAngle(pitch_setpoint_ - pitch);
   const double yaw_error = wrapAngle(yaw_setpoint_ - yaw);
   const double depth_error = depth_setpoint_ - depth;
+  const auto & linear_velocity = (*navigator_msg)->body_velocity.linear;
   const auto & angular_velocity = (*navigator_msg)->body_velocity.angular;
 
   std::array<PidTerms, 4> pid_terms;
@@ -876,8 +877,9 @@ controller_interface::return_type DepthHoldController::update_and_write_commands
     pitch_pid_);
   pid_terms[2] = computePidTermsWithMeasuredRate(
     yaw_error, angular_velocity.z, dt, kp_yaw_, ki_yaw_, kd_yaw_, antiwindup_yaw_, yaw_pid_);
-  pid_terms[3] = computePidTerms(
-    depth_error, dt, kp_depth_, ki_depth_, kd_depth_, antiwindup_depth_, depth_pid_);
+  pid_terms[3] = computePidTermsWithMeasuredRate(
+    depth_error, linear_velocity.z, dt, kp_depth_, ki_depth_, kd_depth_, antiwindup_depth_,
+    depth_pid_);
 
   const double force_z =
     force_ff_z +
