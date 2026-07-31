@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <future>
 #include <limits>
 #include <memory>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -47,6 +49,9 @@ ControllerArbitrator::CallbackReturn ControllerArbitrator::on_configure(
     "position_hold_temporary_controller_name", "position_hold_temporary");
   position_hold_reposition_controller_name_ = declare_parameter<std::string>(
     "position_hold_reposition_controller_name", "position_hold_reposition");
+  controller_manager_switch_service_ = declare_parameter<std::string>(
+    "controller_manager_switch_service",
+    namespacedTopic("controller/controller_manager/switch_controller"));
   const auto position_hold_feedforward_topic_suffix = declare_parameter<std::string>(
     "position_hold_feedforward_topic_suffix", "controller/position_hold/feedforward");
   const auto position_hold_reposition_feedforward_topic_suffix = declare_parameter<std::string>(
@@ -155,6 +160,25 @@ ControllerArbitrator::CallbackReturn ControllerArbitrator::on_configure(
       this,
       std::placeholders::_1,
       std::placeholders::_2));
+  interlock_service_ = create_service<sura_msgs::srv::ControllerInterlock>(
+    namespacedTopic("controller/arbitrator/controller_interlock"),
+    std::bind(
+      &ControllerArbitrator::handleControllerInterlock,
+      this,
+      std::placeholders::_1,
+      std::placeholders::_2));
+  switch_service_ = create_service<controller_manager_msgs::srv::SwitchController>(
+    namespacedTopic("controller/arbitrator/switch_controller"),
+    std::bind(
+      &ControllerArbitrator::handleSwitchController,
+      this,
+      std::placeholders::_1,
+      std::placeholders::_2));
+  switch_proxy_node_ =
+    std::make_shared<rclcpp::Node>("controller_arbitrator_switch_proxy_client");
+  controller_manager_switch_client_ =
+    switch_proxy_node_->create_client<controller_manager_msgs::srv::SwitchController>(
+      controller_manager_switch_service_);
 
   const auto period = std::chrono::duration<double>(1.0 / arbitration_frequency_hz_);
   arbitration_timer_ = create_wall_timer(
@@ -323,6 +347,18 @@ bool ControllerArbitrator::validateCommon(
       get_logger(), *get_clock(), 2000, "Rejecting intent with priority outside [1, 100]");
     return false;
   }
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (isControllerBlockedLocked(controller)) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        2000,
+        "Rejecting intent for blocked controller '%s': controller interlock active",
+        controller.c_str());
+      return false;
+    }
+  }
   const auto route = routes_.find(controller);
   if (route == routes_.end()) {
     RCLCPP_WARN_THROTTLE(
@@ -342,6 +378,16 @@ bool ControllerArbitrator::validateCommon(
     return false;
   }
   return true;
+}
+
+bool ControllerArbitrator::isControllerBlockedLocked(const std::string & controller) const
+{
+  for (const auto & interlock : controller_interlocks_) {
+    if (interlock.second.find(controller) != interlock.second.end()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool ControllerArbitrator::isFinite(double value) const
@@ -475,6 +521,137 @@ void ControllerArbitrator::handleClearControllerIntents(
   response->message = cleared_count == 0 ?
     "No matching intents to clear" :
     "Cleared intents for controller " + request->controller;
+}
+
+void ControllerArbitrator::handleControllerInterlock(
+  const std::shared_ptr<sura_msgs::srv::ControllerInterlock::Request> request,
+  std::shared_ptr<sura_msgs::srv::ControllerInterlock::Response> response)
+{
+  using ControllerInterlock = sura_msgs::srv::ControllerInterlock;
+
+  if (request->command == ControllerInterlock::Request::SET) {
+    if (request->reason.empty()) {
+      response->success = false;
+      response->message = "reason cannot be empty";
+      return;
+    }
+
+    std::optional<Intent> previous_winner;
+    uint32_t cleared_count = 0;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      previous_winner = last_published_winner_;
+      if (request->enabled) {
+        auto & blocked = controller_interlocks_[request->reason];
+        blocked.clear();
+        for (const auto & controller : request->blocked_controllers) {
+          if (!controller.empty()) {
+            blocked.insert(controller);
+          }
+        }
+      } else {
+        controller_interlocks_.erase(request->reason);
+      }
+
+      for (auto it = intents_.begin(); it != intents_.end(); ) {
+        if (isControllerBlockedLocked(it->second.controller)) {
+          it = intents_.erase(it);
+          ++cleared_count;
+        } else {
+          ++it;
+        }
+      }
+      if (last_published_winner_ &&
+        isControllerBlockedLocked(last_published_winner_->controller))
+      {
+        last_published_winner_.reset();
+        zero_published_after_idle_ = true;
+      }
+    }
+
+    bool previous_blocked = false;
+    if (previous_winner) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      previous_blocked = isControllerBlockedLocked(previous_winner->controller);
+    }
+    if (previous_winner && previous_blocked) {
+      publishZeroIfNeeded(previous_winner);
+    }
+
+    response->success = true;
+    response->message = request->enabled ?
+      "Controller interlock enabled. cleared_intents=" + std::to_string(cleared_count) :
+      "Controller interlock disabled";
+  } else if (request->command == ControllerInterlock::Request::QUERY) {
+    response->success = true;
+    response->message = "Controller interlock state";
+  } else {
+    response->success = false;
+    response->message = "Unknown controller interlock command";
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::set<std::string> blocked_controllers;
+    std::string reasons;
+    for (const auto & interlock : controller_interlocks_) {
+      if (!reasons.empty()) {
+        reasons += ",";
+      }
+      reasons += interlock.first;
+      blocked_controllers.insert(interlock.second.begin(), interlock.second.end());
+    }
+    response->enabled = !controller_interlocks_.empty();
+    response->reason = reasons;
+    response->blocked_controllers.assign(
+      blocked_controllers.begin(),
+      blocked_controllers.end());
+  }
+}
+
+void ControllerArbitrator::handleSwitchController(
+  const std::shared_ptr<controller_manager_msgs::srv::SwitchController::Request> request,
+  std::shared_ptr<controller_manager_msgs::srv::SwitchController::Response> response)
+{
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto & controller : request->activate_controllers) {
+      if (isControllerBlockedLocked(controller)) {
+        response->ok = false;
+        RCLCPP_WARN(
+          get_logger(),
+          "Rejecting switch request: controller '%s' is blocked by safety interlock",
+          controller.c_str());
+        return;
+      }
+    }
+  }
+
+  if (!controller_manager_switch_client_->wait_for_service(std::chrono::milliseconds(200))) {
+    response->ok = false;
+    RCLCPP_WARN(
+      get_logger(),
+      "Controller manager switch service '%s' is not available",
+      controller_manager_switch_service_.c_str());
+    return;
+  }
+
+  auto forward_request =
+    std::make_shared<controller_manager_msgs::srv::SwitchController::Request>(*request);
+  auto future = controller_manager_switch_client_->async_send_request(forward_request);
+
+  const auto result = rclcpp::spin_until_future_complete(
+    switch_proxy_node_,
+    future,
+    std::chrono::seconds(2));
+
+  if (result != rclcpp::FutureReturnCode::SUCCESS) {
+    response->ok = false;
+    RCLCPP_ERROR(get_logger(), "Controller manager switch request timed out");
+    return;
+  }
+
+  response->ok = future.get()->ok;
 }
 
 void ControllerArbitrator::arbitrationTick()
@@ -651,6 +828,10 @@ void ControllerArbitrator::cleanupResources()
   pose_sub_.reset();
   wrench_sub_.reset();
   clear_service_.reset();
+  interlock_service_.reset();
+  switch_service_.reset();
+  controller_manager_switch_client_.reset();
+  switch_proxy_node_.reset();
   arbitration_timer_.reset();
   velocity_publishers_.clear();
   position_hold_feedforward_pub_.reset();
@@ -663,6 +844,7 @@ void ControllerArbitrator::cleanupResources()
     intents_.clear();
     last_published_winner_.reset();
     zero_published_after_idle_ = true;
+    controller_interlocks_.clear();
   }
 }
 

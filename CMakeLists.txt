@@ -7,6 +7,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(controller_interface REQUIRED)
+find_package(controller_manager_msgs REQUIRED)
 find_package(hardware_interface REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -90,6 +91,7 @@ ament_target_dependencies(${PROJECT_NAME}
 )
 
 ament_target_dependencies(controller_arbitrator
+  controller_manager_msgs
   geometry_msgs
   lifecycle_msgs
   rclcpp

@@ -5,10 +5,12 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <variant>
 
+#include "controller_manager_msgs/srv/switch_controller.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/wrench.hpp"
@@ -18,6 +20,7 @@
 #include "sura_msgs/msg/sura_velocity_command.hpp"
 #include "sura_msgs/msg/sura_wrench_command.hpp"
 #include "sura_msgs/srv/clear_controller_intents.hpp"
+#include "sura_msgs/srv/controller_interlock.hpp"
 
 namespace sura_controllers
 {
@@ -77,6 +80,7 @@ private:
     const std::string & controller,
     uint8_t priority,
     IntentType type);
+  bool isControllerBlockedLocked(const std::string & controller) const;
   bool isFinite(const VelocityMsg & msg) const;
   bool isFinite(const PoseMsg & msg) const;
   bool isFinite(const WrenchMsg & msg) const;
@@ -90,6 +94,12 @@ private:
   void handleClearControllerIntents(
     const std::shared_ptr<sura_msgs::srv::ClearControllerIntents::Request> request,
     std::shared_ptr<sura_msgs::srv::ClearControllerIntents::Response> response);
+  void handleControllerInterlock(
+    const std::shared_ptr<sura_msgs::srv::ControllerInterlock::Request> request,
+    std::shared_ptr<sura_msgs::srv::ControllerInterlock::Response> response);
+  void handleSwitchController(
+    const std::shared_ptr<controller_manager_msgs::srv::SwitchController::Request> request,
+    std::shared_ptr<controller_manager_msgs::srv::SwitchController::Response> response);
 
   void arbitrationTick();
   void removeExpiredIntents(const rclcpp::Time & now);
@@ -105,6 +115,7 @@ private:
   std::string position_hold_controller_name_{"position_hold"};
   std::string position_hold_temporary_controller_name_{"position_hold_temporary"};
   std::string position_hold_reposition_controller_name_{"position_hold_reposition"};
+  std::string controller_manager_switch_service_;
   std::string position_hold_feedforward_topic_;
   std::string position_hold_reposition_feedforward_topic_;
   double arbitration_frequency_hz_{10.0};
@@ -115,12 +126,18 @@ private:
   std::unordered_map<std::string, Intent> intents_;
   std::optional<Intent> last_published_winner_;
   bool zero_published_after_idle_{true};
+  std::map<std::string, std::set<std::string>> controller_interlocks_;
   mutable std::mutex mutex_;
 
   rclcpp::Subscription<sura_msgs::msg::SuraVelocityCommand>::SharedPtr velocity_sub_;
   rclcpp::Subscription<sura_msgs::msg::SuraPoseCommand>::SharedPtr pose_sub_;
   rclcpp::Subscription<sura_msgs::msg::SuraWrenchCommand>::SharedPtr wrench_sub_;
   rclcpp::Service<sura_msgs::srv::ClearControllerIntents>::SharedPtr clear_service_;
+  rclcpp::Service<sura_msgs::srv::ControllerInterlock>::SharedPtr interlock_service_;
+  rclcpp::Service<controller_manager_msgs::srv::SwitchController>::SharedPtr switch_service_;
+  rclcpp::Node::SharedPtr switch_proxy_node_;
+  rclcpp::Client<controller_manager_msgs::srv::SwitchController>::SharedPtr
+    controller_manager_switch_client_;
   rclcpp::TimerBase::SharedPtr arbitration_timer_;
 
   std::map<std::string, rclcpp_lifecycle::LifecyclePublisher<VelocityMsg>::SharedPtr>
