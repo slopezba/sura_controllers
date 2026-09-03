@@ -122,10 +122,12 @@ private:
   rclcpp::Service<TriggerSrv>::SharedPtr enable_roll_pitch_srv_;
   rclcpp::Service<TriggerSrv>::SharedPtr disable_roll_pitch_srv_;
   rclcpp::Publisher<Vector3Msg>::SharedPtr setpoint_pub_;
+  rclcpp::Publisher<WrenchMsg>::SharedPtr body_force_pub_;
   rclcpp::Publisher<WrenchMsg>::SharedPtr output_pub_;
   rclcpp::Publisher<Float64MultiArrayMsg>::SharedPtr pid_terms_pub_;
   rclcpp::Publisher<sura_msgs::msg::ControllerDebug>::SharedPtr debug_pub_;
   std::shared_ptr<realtime_tools::RealtimePublisher<Vector3Msg>> setpoint_rt_pub_;
+  std::shared_ptr<realtime_tools::RealtimePublisher<WrenchMsg>> body_force_rt_pub_;
   std::shared_ptr<realtime_tools::RealtimePublisher<WrenchMsg>> output_rt_pub_;
   std::shared_ptr<realtime_tools::RealtimePublisher<Float64MultiArrayMsg>> pid_terms_rt_pub_;
   rclcpp::TimerBase::SharedPtr debug_timer_;
@@ -142,6 +144,7 @@ private:
   std::string setpoint_topic_;
   std::string output_topic_;
   std::string pid_terms_topic_;
+  std::string body_force_command_topic_;
   std::string enable_roll_pitch_service_name_;
   std::string disable_roll_pitch_service_name_;
   std::string body_force_controller_name_;

@@ -11,9 +11,11 @@
 
 #include "controller_interface/controller_interface.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
+#include "geometry_msgs/msg/wrench.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
 #include "realtime_tools/realtime_buffer.hpp"
+#include "realtime_tools/realtime_publisher.hpp"
 #include "sura_msgs/msg/navigator.hpp"
 
 namespace sura_controllers::auv
@@ -50,6 +52,7 @@ private:
   using InputMatrix = Eigen::Matrix<double, kStateSize, kInputSize>;
   using NavigatorMsg = sura_msgs::msg::Navigator;
   using PoseStampedMsg = geometry_msgs::msg::PoseStamped;
+  using WrenchMsg = geometry_msgs::msg::Wrench;
 
   struct MpcState
   {
@@ -174,6 +177,8 @@ private:
 
   rclcpp::Subscription<NavigatorMsg>::SharedPtr navigator_sub_;
   rclcpp::Subscription<PoseStampedMsg>::SharedPtr setpoint_sub_;
+  rclcpp::Publisher<WrenchMsg>::SharedPtr body_force_pub_;
+  std::shared_ptr<realtime_tools::RealtimePublisher<WrenchMsg>> body_force_rt_pub_;
 
   realtime_tools::RealtimeBuffer<std::shared_ptr<NavigatorMsg>> navigator_buffer_;
   realtime_tools::RealtimeBuffer<std::shared_ptr<PoseStampedMsg>> setpoint_buffer_;
@@ -187,6 +192,7 @@ private:
   std::string navigator_topic_;
   std::string setpoint_topic_;
   std::string body_force_controller_name_;
+  std::string body_force_command_topic_;
   std::string world_frame_id_;
   std::string base_frame_id_;
   std::string fallback_mode_;

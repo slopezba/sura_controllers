@@ -78,6 +78,8 @@ controller_interface::CallbackReturn StabilizeController::on_init()
       "disable_roll_pitch_service_name", "stabilize/disable_roll_pitch");
     auto_declare<std::string>(
       "body_force_controller_name", "body_force");
+    auto_declare<std::string>(
+      "body_force_command_topic", "body_force/command");
 
     auto_declare<bool>("allow_roll_pitch", false);
     auto_declare<double>("feedforward_gain_x", 1.0);
@@ -116,18 +118,8 @@ controller_interface::CallbackReturn StabilizeController::on_init()
 controller_interface::InterfaceConfiguration
 StabilizeController::command_interface_configuration() const
 {
-  const std::string prefix = body_force_controller_name_;
-
   return {
-    controller_interface::interface_configuration_type::INDIVIDUAL,
-    {
-      prefix + "/force.x",
-      prefix + "/force.y",
-      prefix + "/force.z",
-      prefix + "/torque.x",
-      prefix + "/torque.y",
-      prefix + "/torque.z"
-    }
+    controller_interface::interface_configuration_type::NONE
   };
 }
 
@@ -153,6 +145,8 @@ controller_interface::CallbackReturn StabilizeController::on_configure(
     get_node()->get_parameter("disable_roll_pitch_service_name").as_string();
   body_force_controller_name_ =
     get_node()->get_parameter("body_force_controller_name").as_string();
+  body_force_command_topic_ =
+    get_node()->get_parameter("body_force_command_topic").as_string();
   debug_enabled_ = get_node()->get_parameter("debug.enabled").as_bool();
   debug_topic_ = get_node()->get_parameter("debug.topic").as_string();
   allow_roll_pitch_ = get_node()->get_parameter("allow_roll_pitch").as_bool();
@@ -228,6 +222,11 @@ controller_interface::CallbackReturn StabilizeController::on_configure(
     rclcpp::SystemDefaultsQoS());
   setpoint_rt_pub_ =
     std::make_shared<realtime_tools::RealtimePublisher<Vector3Msg>>(setpoint_pub_);
+  body_force_pub_ = get_node()->create_publisher<WrenchMsg>(
+    body_force_command_topic_,
+    rclcpp::SystemDefaultsQoS());
+  body_force_rt_pub_ =
+    std::make_shared<realtime_tools::RealtimePublisher<WrenchMsg>>(body_force_pub_);
   output_pub_ = get_node()->create_publisher<WrenchMsg>(
     output_topic_,
     rclcpp::SystemDefaultsQoS());
@@ -277,6 +276,10 @@ controller_interface::CallbackReturn StabilizeController::on_configure(
     feedforward_gain_yaw_);
   RCLCPP_INFO(
     get_node()->get_logger(),
+    "Stabilize body force command topic: %s",
+    body_force_command_topic_.c_str());
+  RCLCPP_INFO(
+    get_node()->get_logger(),
     "Stabilize PID gains loaded: roll(kp=%.3f ki=%.3f kd=%.3f) pitch(kp=%.3f ki=%.3f kd=%.3f) yaw(kp=%.3f ki=%.3f kd=%.3f)",
     kp_roll_,
     ki_roll_,
@@ -318,10 +321,6 @@ controller_interface::CallbackReturn StabilizeController::on_activate(
     reference_interfaces_.end(),
     std::numeric_limits<double>::quiet_NaN());
   resetDebugStats();
-
-  for (auto & command_interface : command_interfaces_) {
-    command_interface.set_value(0.0);
-  }
 
   RCLCPP_INFO(
     get_node()->get_logger(),
@@ -372,8 +371,9 @@ controller_interface::CallbackReturn StabilizeController::on_deactivate(
     reference_interfaces_.end(),
     std::numeric_limits<double>::quiet_NaN());
 
-  for (auto & command_interface : command_interfaces_) {
-    command_interface.set_value(0.0);
+  if (body_force_rt_pub_ && body_force_rt_pub_->trylock()) {
+    body_force_rt_pub_->msg_ = WrenchMsg{};
+    body_force_rt_pub_->unlockAndPublish();
   }
 
   if (debug_enabled_ && debug_pub_) {
@@ -657,10 +657,6 @@ controller_interface::return_type StabilizeController::update_and_write_commands
     return controller_interface::return_type::OK;
   }
 
-  if (command_interfaces_.size() != 6) {
-    return controller_interface::return_type::ERROR;
-  }
-
   const auto & orientation = (*navigator_msg)->position.orientation;
   tf2::Quaternion q(
     orientation.x,
@@ -775,12 +771,15 @@ controller_interface::return_type StabilizeController::update_and_write_commands
     yaw_feedforward +
     pid_terms[2].proportional + pid_terms[2].integral + pid_terms[2].derivative;
 
-  command_interfaces_[0].set_value(force_x);
-  command_interfaces_[1].set_value(force_y);
-  command_interfaces_[2].set_value(force_z);
-  command_interfaces_[3].set_value(torque_x);
-  command_interfaces_[4].set_value(torque_y);
-  command_interfaces_[5].set_value(torque_z);
+  if (body_force_rt_pub_ && body_force_rt_pub_->trylock()) {
+    body_force_rt_pub_->msg_.force.x = force_x;
+    body_force_rt_pub_->msg_.force.y = force_y;
+    body_force_rt_pub_->msg_.force.z = force_z;
+    body_force_rt_pub_->msg_.torque.x = torque_x;
+    body_force_rt_pub_->msg_.torque.y = torque_y;
+    body_force_rt_pub_->msg_.torque.z = torque_z;
+    body_force_rt_pub_->unlockAndPublish();
+  }
 
   publishTelemetry(force_x, force_y, force_z, torque_x, torque_y, torque_z, pid_terms);
 

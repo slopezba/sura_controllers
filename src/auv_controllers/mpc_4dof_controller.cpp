@@ -340,6 +340,7 @@ controller_interface::CallbackReturn Mpc4dofController::on_init()
     auto_declare<std::string>("navigator_topic", "navigator/navigation");
     auto_declare<std::string>("setpoint_topic", "mpc_4dof/setpoint");
     auto_declare<std::string>("body_force_controller_name", "body_force");
+    auto_declare<std::string>("body_force_command_topic", "body_force/command");
     auto_declare<std::string>("world_frame_id", "world_ned");
     auto_declare<std::string>("base_frame_id", "");
     auto_declare<int>("prediction_horizon", 10);
@@ -374,20 +375,8 @@ controller_interface::CallbackReturn Mpc4dofController::on_init()
 controller_interface::InterfaceConfiguration
 Mpc4dofController::command_interface_configuration() const
 {
-  const std::string body_force_name = get_node()->has_parameter("body_force_controller_name") ?
-    get_node()->get_parameter("body_force_controller_name").as_string() :
-    std::string("body_force");
-
   return {
-    controller_interface::interface_configuration_type::INDIVIDUAL,
-    {
-      body_force_name + "/force.x",
-      body_force_name + "/force.y",
-      body_force_name + "/force.z",
-      body_force_name + "/torque.x",
-      body_force_name + "/torque.y",
-      body_force_name + "/torque.z"
-    }
+    controller_interface::interface_configuration_type::NONE
   };
 }
 
@@ -403,6 +392,7 @@ controller_interface::CallbackReturn Mpc4dofController::on_configure(
   navigator_topic_ = get_node()->get_parameter("navigator_topic").as_string();
   setpoint_topic_ = get_node()->get_parameter("setpoint_topic").as_string();
   body_force_controller_name_ = get_node()->get_parameter("body_force_controller_name").as_string();
+  body_force_command_topic_ = get_node()->get_parameter("body_force_command_topic").as_string();
   world_frame_id_ = get_node()->get_parameter("world_frame_id").as_string();
   base_frame_id_ = get_node()->get_parameter("base_frame_id").as_string();
   prediction_horizon_ = std::max(
@@ -494,13 +484,19 @@ controller_interface::CallbackReturn Mpc4dofController::on_configure(
       last_setpoint_time_ns_.store(get_node()->now().nanoseconds(), std::memory_order_relaxed);
     });
 
+  body_force_pub_ = get_node()->create_publisher<WrenchMsg>(
+    body_force_command_topic_,
+    rclcpp::SystemDefaultsQoS());
+  body_force_rt_pub_ =
+    std::make_shared<realtime_tools::RealtimePublisher<WrenchMsg>>(body_force_pub_);
+
   RCLCPP_INFO(get_node()->get_logger(), "Configured Mpc4dofController");
   RCLCPP_INFO(get_node()->get_logger(), "Navigator topic: %s", navigator_topic_.c_str());
   RCLCPP_INFO(get_node()->get_logger(), "Setpoint topic: %s", setpoint_topic_.c_str());
   RCLCPP_INFO(
     get_node()->get_logger(),
-    "Writing chained wrench references to controller '%s'",
-    body_force_controller_name_.c_str());
+    "Publishing body force commands to topic '%s'",
+    body_force_command_topic_.c_str());
 
   return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -518,18 +514,6 @@ controller_interface::CallbackReturn Mpc4dofController::on_activate(
   last_navigator_time_ns_.store(0, std::memory_order_relaxed);
   last_setpoint_time_ns_.store(0, std::memory_order_relaxed);
 
-  if (command_interfaces_.size() != 6U) {
-    RCLCPP_ERROR(
-      get_node()->get_logger(),
-      "Mpc4dofController expected 6 command interfaces, got %zu",
-      command_interfaces_.size());
-    return controller_interface::CallbackReturn::ERROR;
-  }
-
-  for (auto & command_interface : command_interfaces_) {
-    command_interface.set_value(0.0);
-  }
-
   solver_running_.store(true, std::memory_order_release);
   solver_thread_ = std::thread(&Mpc4dofController::solverLoop, this);
 
@@ -541,8 +525,9 @@ controller_interface::CallbackReturn Mpc4dofController::on_deactivate(
   const rclcpp_lifecycle::State &)
 {
   stopSolverThread();
-  for (auto & command_interface : command_interfaces_) {
-    command_interface.set_value(0.0);
+  if (body_force_rt_pub_ && body_force_rt_pub_->trylock()) {
+    body_force_rt_pub_->msg_ = WrenchMsg{};
+    body_force_rt_pub_->unlockAndPublish();
   }
   RCLCPP_INFO(get_node()->get_logger(), "Deactivated Mpc4dofController");
   return controller_interface::CallbackReturn::SUCCESS;
@@ -557,12 +542,15 @@ controller_interface::return_type Mpc4dofController::update(
     return controller_interface::return_type::OK;
   }
 
-  command_interfaces_[0].set_value(command->tau[0]);
-  command_interfaces_[1].set_value(command->tau[1]);
-  command_interfaces_[2].set_value(command->tau[2]);
-  command_interfaces_[3].set_value(0.0);
-  command_interfaces_[4].set_value(0.0);
-  command_interfaces_[5].set_value(command->tau[3]);
+  if (body_force_rt_pub_ && body_force_rt_pub_->trylock()) {
+    body_force_rt_pub_->msg_.force.x = command->tau[0];
+    body_force_rt_pub_->msg_.force.y = command->tau[1];
+    body_force_rt_pub_->msg_.force.z = command->tau[2];
+    body_force_rt_pub_->msg_.torque.x = 0.0;
+    body_force_rt_pub_->msg_.torque.y = 0.0;
+    body_force_rt_pub_->msg_.torque.z = command->tau[3];
+    body_force_rt_pub_->unlockAndPublish();
+  }
 
   return controller_interface::return_type::OK;
 }
