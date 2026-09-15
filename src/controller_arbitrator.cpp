@@ -174,8 +174,11 @@ ControllerArbitrator::CallbackReturn ControllerArbitrator::on_configure(
       this,
       std::placeholders::_1,
       std::placeholders::_2));
-  switch_proxy_node_ =
-    std::make_shared<rclcpp::Node>("controller_arbitrator_switch_proxy_client");
+  const auto switch_proxy_options =
+    rclcpp::NodeOptions().use_global_arguments(false);
+  switch_proxy_node_ = std::make_shared<rclcpp::Node>(
+    "controller_arbitrator_switch_proxy_client",
+    switch_proxy_options);
   controller_manager_switch_client_ =
     switch_proxy_node_->create_client<controller_manager_msgs::srv::SwitchController>(
       controller_manager_switch_service_);

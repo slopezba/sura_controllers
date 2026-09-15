@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <limits>
 #include <memory>
@@ -9,10 +10,13 @@
 
 #include "controller_interface/chainable_controller_interface.hpp"
 #include "geometry_msgs/msg/twist.hpp"
+#include "geometry_msgs/msg/wrench.hpp"
 #include "hardware_interface/loaned_command_interface.hpp"
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "realtime_tools/realtime_buffer.hpp"
+#include "realtime_tools/realtime_publisher.hpp"
+#include "std_msgs/msg/float64_multi_array.hpp"
 #include "sura_msgs/msg/controller_debug.hpp"
 #include "sura_msgs/msg/navigator.hpp"
 
@@ -49,6 +53,8 @@ protected:
 
 private:
   using TwistMsg = geometry_msgs::msg::Twist;
+  using WrenchMsg = geometry_msgs::msg::Wrench;
+  using Float64MultiArrayMsg = std_msgs::msg::Float64MultiArray;
   using DebugMsg = sura_msgs::msg::ControllerDebug;
   using NavigatorMsg = sura_msgs::msg::Navigator;
 
@@ -59,19 +65,31 @@ private:
   void recordDebugCycle(
     const std::chrono::steady_clock::time_point & update_start,
     const rclcpp::Duration & period);
+  void publishTelemetry(
+    const WrenchMsg & wrench,
+    const std::array<double, 6> & pid_terms);
 
-  rclcpp::Subscription<TwistMsg>::SharedPtr cmd_vel_sub_;
+  rclcpp::Subscription<TwistMsg>::SharedPtr setpoint_sub_;
   rclcpp::Subscription<NavigatorMsg>::SharedPtr navigator_sub_;
+  rclcpp::Publisher<WrenchMsg>::SharedPtr feedforward_pub_;
+  rclcpp::Publisher<WrenchMsg>::SharedPtr output_pub_;
+  rclcpp::Publisher<Float64MultiArrayMsg>::SharedPtr pid_terms_pub_;
   rclcpp::Publisher<DebugMsg>::SharedPtr debug_pub_;
+  std::shared_ptr<realtime_tools::RealtimePublisher<WrenchMsg>> feedforward_rt_pub_;
+  std::shared_ptr<realtime_tools::RealtimePublisher<WrenchMsg>> output_rt_pub_;
+  std::shared_ptr<realtime_tools::RealtimePublisher<Float64MultiArrayMsg>> pid_terms_rt_pub_;
   rclcpp::TimerBase::SharedPtr debug_timer_;
 
-  realtime_tools::RealtimeBuffer<std::shared_ptr<TwistMsg>> cmd_vel_buffer_;
+  realtime_tools::RealtimeBuffer<std::shared_ptr<TwistMsg>> setpoint_buffer_;
   realtime_tools::RealtimeBuffer<std::shared_ptr<NavigatorMsg>> navigator_buffer_;
 
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
 
-  std::string cmd_vel_topic_{"/cmd_vel"};
+  std::string setpoint_topic_{"body_velocity/setpoint"};
   std::string navigator_topic_{"/navigator_msg"};
+  std::string feedforward_topic_{"body_force/command"};
+  std::string output_topic_{"body_velocity/output"};
+  std::string pid_terms_topic_{"body_velocity/pid_terms"};
   std::string body_force_controller_name_{"body_force_controller"};
   std::string debug_topic_{"debug"};
 

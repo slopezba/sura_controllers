@@ -94,11 +94,37 @@ void BodyVelocityController::recordDebugCycle(
   }
 }
 
+void BodyVelocityController::publishTelemetry(
+  const WrenchMsg & wrench,
+  const std::array<double, 6> & pid_terms)
+{
+  if (feedforward_rt_pub_ && feedforward_rt_pub_->trylock()) {
+    feedforward_rt_pub_->msg_ = wrench;
+    feedforward_rt_pub_->unlockAndPublish();
+  }
+
+  if (output_rt_pub_ && output_rt_pub_->trylock()) {
+    output_rt_pub_->msg_ = wrench;
+    output_rt_pub_->unlockAndPublish();
+  }
+
+  if (pid_terms_rt_pub_ && pid_terms_rt_pub_->trylock()) {
+    auto & data = pid_terms_rt_pub_->msg_.data;
+    for (size_t i = 0; i < pid_terms.size(); ++i) {
+      data[i] = pid_terms[i];
+    }
+    pid_terms_rt_pub_->unlockAndPublish();
+  }
+}
+
 controller_interface::CallbackReturn BodyVelocityController::on_init()
 {
   try {
-    auto_declare<std::string>("cmd_vel_topic", "/cmd_vel");
+    auto_declare<std::string>("setpoint_topic", "body_velocity/setpoint");
     auto_declare<std::string>("navigator_topic", "/navigator_msg");
+    auto_declare<std::string>("feedforward_topic", "body_force/command");
+    auto_declare<std::string>("output_topic", "body_velocity/output");
+    auto_declare<std::string>("pid_terms_topic", "body_velocity/pid_terms");
     auto_declare<std::string>("body_force_controller_name", "body_force_controller");
 
     auto_declare<double>("kp_u", 0.0);
@@ -132,18 +158,8 @@ controller_interface::CallbackReturn BodyVelocityController::on_init()
 controller_interface::InterfaceConfiguration
 BodyVelocityController::command_interface_configuration() const
 {
-  const std::string prefix = body_force_controller_name_;
-
   return {
-    controller_interface::interface_configuration_type::INDIVIDUAL,
-    {
-      prefix + "/force.x",
-      prefix + "/force.y",
-      prefix + "/force.z",
-      prefix + "/torque.x",
-      prefix + "/torque.y",
-      prefix + "/torque.z"
-    }
+    controller_interface::interface_configuration_type::NONE
   };
 }
 
@@ -158,8 +174,11 @@ BodyVelocityController::state_interface_configuration() const
 controller_interface::CallbackReturn BodyVelocityController::on_configure(
   const rclcpp_lifecycle::State &)
 {
-  cmd_vel_topic_ = get_node()->get_parameter("cmd_vel_topic").as_string();
+  setpoint_topic_ = get_node()->get_parameter("setpoint_topic").as_string();
   navigator_topic_ = get_node()->get_parameter("navigator_topic").as_string();
+  feedforward_topic_ = get_node()->get_parameter("feedforward_topic").as_string();
+  output_topic_ = get_node()->get_parameter("output_topic").as_string();
+  pid_terms_topic_ = get_node()->get_parameter("pid_terms_topic").as_string();
   body_force_controller_name_ =
     get_node()->get_parameter("body_force_controller_name").as_string();
   debug_enabled_ = get_node()->get_parameter("debug.enabled").as_bool();
@@ -176,12 +195,12 @@ controller_interface::CallbackReturn BodyVelocityController::on_configure(
   kd_r_ = get_node()->get_parameter("kd_r").as_double();
   integral_limit_r_ = get_node()->get_parameter("integral_limit_r").as_double();
 
-  cmd_vel_sub_ = get_node()->create_subscription<TwistMsg>(
-    cmd_vel_topic_,
+  setpoint_sub_ = get_node()->create_subscription<TwistMsg>(
+    setpoint_topic_,
     rclcpp::SystemDefaultsQoS(),
     [this](const TwistMsg::SharedPtr msg)
     {
-      cmd_vel_buffer_.writeFromNonRT(msg);
+      setpoint_buffer_.writeFromNonRT(msg);
     });
 
   navigator_sub_ = get_node()->create_subscription<NavigatorMsg>(
@@ -191,6 +210,20 @@ controller_interface::CallbackReturn BodyVelocityController::on_configure(
     {
       navigator_buffer_.writeFromNonRT(msg);
     });
+
+  feedforward_pub_ = get_node()->create_publisher<WrenchMsg>(
+    feedforward_topic_, rclcpp::SystemDefaultsQoS());
+  feedforward_rt_pub_ =
+    std::make_shared<realtime_tools::RealtimePublisher<WrenchMsg>>(feedforward_pub_);
+  output_pub_ = get_node()->create_publisher<WrenchMsg>(
+    output_topic_, rclcpp::SystemDefaultsQoS());
+  output_rt_pub_ =
+    std::make_shared<realtime_tools::RealtimePublisher<WrenchMsg>>(output_pub_);
+  pid_terms_pub_ = get_node()->create_publisher<Float64MultiArrayMsg>(
+    pid_terms_topic_, rclcpp::SystemDefaultsQoS());
+  pid_terms_rt_pub_ =
+    std::make_shared<realtime_tools::RealtimePublisher<Float64MultiArrayMsg>>(pid_terms_pub_);
+  pid_terms_rt_pub_->msg_.data.resize(6, 0.0);
 
   param_callback_handle_ = get_node()->add_on_set_parameters_callback(
     std::bind(&BodyVelocityController::parametersCallback, this, std::placeholders::_1));
@@ -210,8 +243,10 @@ controller_interface::CallbackReturn BodyVelocityController::on_configure(
   }
 
   RCLCPP_INFO(get_node()->get_logger(), "Configured BodyVelocityController");
-  RCLCPP_INFO(get_node()->get_logger(), "cmd_vel topic: %s", cmd_vel_topic_.c_str());
+  RCLCPP_INFO(get_node()->get_logger(), "setpoint topic: %s", setpoint_topic_.c_str());
   RCLCPP_INFO(get_node()->get_logger(), "navigator topic: %s", navigator_topic_.c_str());
+  RCLCPP_INFO(get_node()->get_logger(), "feedforward topic: %s", feedforward_topic_.c_str());
+  RCLCPP_INFO(get_node()->get_logger(), "output topic: %s", output_topic_.c_str());
   RCLCPP_INFO(
     get_node()->get_logger(),
     "body_force_controller_name: %s",
@@ -247,10 +282,6 @@ controller_interface::CallbackReturn BodyVelocityController::on_activate(
     reference_interfaces_.end(),
     std::numeric_limits<double>::quiet_NaN());
 
-  for (auto & command_interface : command_interfaces_) {
-    command_interface.set_value(0.0);
-  }
-
   return controller_interface::CallbackReturn::SUCCESS;
 }
 
@@ -271,8 +302,9 @@ controller_interface::CallbackReturn BodyVelocityController::on_deactivate(
     reference_interfaces_.end(),
     std::numeric_limits<double>::quiet_NaN());
 
-  for (auto & command_interface : command_interfaces_) {
-    command_interface.set_value(0.0);
+  if (feedforward_rt_pub_ && feedforward_rt_pub_->trylock()) {
+    feedforward_rt_pub_->msg_ = WrenchMsg{};
+    feedforward_rt_pub_->unlockAndPublish();
   }
 
   return controller_interface::CallbackReturn::SUCCESS;
@@ -308,11 +340,11 @@ bool BodyVelocityController::on_set_chained_mode(bool chained_mode)
 
 controller_interface::return_type BodyVelocityController::update_reference_from_subscribers()
 {
-  auto cmd_vel_msg = cmd_vel_buffer_.readFromRT();
+  auto setpoint_msg = setpoint_buffer_.readFromRT();
 
-  if (!(!cmd_vel_msg || !(*cmd_vel_msg))) {
-    reference_interfaces_[0] = (*cmd_vel_msg)->linear.x;
-    reference_interfaces_[1] = (*cmd_vel_msg)->angular.z;
+  if (!(!setpoint_msg || !(*setpoint_msg))) {
+    reference_interfaces_[0] = (*setpoint_msg)->linear.x;
+    reference_interfaces_[1] = (*setpoint_msg)->angular.z;
   }
 
   return controller_interface::return_type::OK;
@@ -427,22 +459,17 @@ controller_interface::return_type BodyVelocityController::update_and_write_comma
     ki_r_ * integral_r_ +
     kd_r_ * derivative_r;
 
-  if (command_interfaces_.size() != 6) {
-    RCLCPP_ERROR_THROTTLE(
-      get_node()->get_logger(),
-      *get_node()->get_clock(),
-      2000,
-      "Expected 6 command interfaces, got %zu",
-      command_interfaces_.size());
-    return controller_interface::return_type::ERROR;
-  }
-
-  command_interfaces_[0].set_value(force_x);
-  command_interfaces_[1].set_value(0.0);
-  command_interfaces_[2].set_value(0.0);
-  command_interfaces_[3].set_value(0.0);
-  command_interfaces_[4].set_value(0.0);
-  command_interfaces_[5].set_value(torque_z);
+  WrenchMsg wrench;
+  wrench.force.x = force_x;
+  wrench.torque.z = torque_z;
+  const std::array<double, 6> pid_terms{
+    kp_u_ * error_u,
+    ki_u_ * integral_u_,
+    kd_u_ * derivative_u,
+    kp_r_ * error_r,
+    ki_r_ * integral_r_,
+    kd_r_ * derivative_r};
+  publishTelemetry(wrench, pid_terms);
 
   recordDebugCycle(update_start, period);
 
