@@ -73,7 +73,7 @@ Current plugins:
 | `sura_controllers/auv/StateObserverController` | `sura_controllers::auv::StateObserverController` | AUV state observer and model identification |
 | `sura_controllers/auv/Mpc4dofController` | `sura_controllers::auv::Mpc4dofController` | AUV 4-DoF MPC |
 | `sura_controllers/usv/BodyVelocityController` | `sura_controllers::usv::BodyVelocityController` | USV surge and yaw-rate controller |
-| `sura_controllers/usv/BodyPositionController` | `sura_controllers::usv::BodyPositionController` | USV position-to-velocity controller |
+| `sura_controllers/usv/PositionHoldController` | `sura_controllers::usv::PositionHoldController` | USV position hold controller |
 
 ## Topic Mode And Chained Mode
 
@@ -97,7 +97,7 @@ position_hold -> body_velocity -> stabilize/depth_hold -> body_force -> thruster
 Typical USV chain:
 
 ```text
-body_position -> body_velocity -> body_force -> thrusters
+position_hold -> body_velocity -> body_force -> thrusters
 ```
 
 The chain depends on controller names. If a controller consumes references from `body_force`, it requests interfaces such as:
@@ -287,26 +287,29 @@ Realtime notes:
 - The update loop only reads pre-existing buffers, computes PID terms, writes command interfaces, and updates atomics
 - Debug publishing happens from a timer, not from the realtime update loop
 
-### `BodyPositionController`
+### USV `PositionHoldController`
 
 Location:
 
-- [`src/usv_controllers/body_position_controller.cpp`](/home/cirtesu/cirtesub_ws/src/sura_controllers/src/usv_controllers/body_position_controller.cpp)
-- [`include/sura_controllers/usv/body_position_controller.hpp`](/home/cirtesu/cirtesub_ws/src/sura_controllers/include/sura_controllers/usv/body_position_controller.hpp)
+- `src/usv_controllers/position_hold_controller.cpp`
+- `include/sura_controllers/usv/position_hold_controller.hpp`
 
 Purpose:
 
-Convert a position target into USV body velocity references.
+Convert a position target into USV body velocity setpoints.
 
 Input:
 
 - `geometry_msgs/msg/PoseStamped` setpoint
+- temporary and reposition `geometry_msgs/msg/Twist` feedforward commands
 - navigator pose and yaw
 
 Output:
 
 - `linear.x`
 - `angular.z`
+
+The velocity command is published to the configured body velocity setpoint topic.
 
 Behavior:
 

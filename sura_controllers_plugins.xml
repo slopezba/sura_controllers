@@ -63,10 +63,10 @@
   </class>
 
   <class
-    name="sura_controllers/usv/BodyPositionController"
-    type="sura_controllers::usv::BodyPositionController"
+    name="sura_controllers/usv/PositionHoldController"
+    type="sura_controllers::usv::PositionHoldController"
     base_class_type="controller_interface::ControllerInterface">
-    <description>USV body position controller</description>
+    <description>USV position hold controller</description>
   </class>
 
   <class
