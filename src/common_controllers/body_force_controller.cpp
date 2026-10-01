@@ -359,6 +359,57 @@ controller_interface::CallbackReturn BodyForceController::on_configure(
   output_pub_ = this->get_node()->create_publisher<Float64MultiArrayMsg>(
     output_topic_,
     rclcpp::SystemDefaultsQoS());
+  std::string resolved_output_topic = output_topic_;
+  if (resolved_output_topic.empty() || resolved_output_topic.front() != '/') {
+    std::string node_namespace = get_node()->get_namespace();
+    if (!node_namespace.empty() && node_namespace.back() == '/') {
+      node_namespace.pop_back();
+    }
+    resolved_output_topic = node_namespace + "/" + resolved_output_topic;
+  }
+  const auto output_topic_separator = resolved_output_topic.find_last_of('/');
+  const std::string allocation_matrix_topic =
+    (output_topic_separator == std::string::npos ? std::string{} :
+    resolved_output_topic.substr(0, output_topic_separator)) + "/allocation_matrix";
+  allocation_matrix_pub_ = this->get_node()->create_publisher<Float64MultiArrayMsg>(
+    allocation_matrix_topic,
+    rclcpp::QoS(1).reliable().transient_local());
+  allocation_matrix_msg_.layout.dim.resize(2);
+  allocation_matrix_msg_.layout.dim[0].label = "wrench_axis";
+  allocation_matrix_msg_.layout.dim[0].size = 6;
+  allocation_matrix_msg_.layout.dim[0].stride =
+    static_cast<uint32_t>(6 * thruster_joints_.size());
+  std::ostringstream thruster_order;
+  for (std::size_t index = 0; index < thruster_joints_.size(); ++index) {
+    if (index > 0) {
+      thruster_order << ",";
+    }
+    thruster_order << thruster_joints_[index];
+  }
+  allocation_matrix_msg_.layout.dim[1].label = thruster_order.str();
+  allocation_matrix_msg_.layout.dim[1].size =
+    static_cast<uint32_t>(thruster_joints_.size());
+  allocation_matrix_msg_.layout.dim[1].stride =
+    static_cast<uint32_t>(thruster_joints_.size());
+  allocation_matrix_msg_.layout.data_offset = 0;
+  allocation_matrix_msg_.data.reserve(6 * thruster_joints_.size());
+  for (int row = 0; row < thruster_allocation_matrix_.rows(); ++row) {
+    for (int col = 0; col < thruster_allocation_matrix_.cols(); ++col) {
+      allocation_matrix_msg_.data.push_back(thruster_allocation_matrix_(row, col));
+    }
+  }
+  allocation_matrix_pub_->publish(allocation_matrix_msg_);
+  allocation_matrix_timer_ = get_node()->create_wall_timer(
+    std::chrono::seconds(1),
+    [this]()
+    {
+      if (allocation_matrix_pub_) {
+        allocation_matrix_pub_->publish(allocation_matrix_msg_);
+      }
+    });
+  RCLCPP_INFO(
+    get_node()->get_logger(), "Published thruster allocation matrix on '%s'",
+    allocation_matrix_topic.c_str());
   output_rt_pub_ =
     std::make_shared<realtime_tools::RealtimePublisher<Float64MultiArrayMsg>>(output_pub_);
   output_rt_pub_->msg_.data.resize(thruster_joints_.size(), 0.0);

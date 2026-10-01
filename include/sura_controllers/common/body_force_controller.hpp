@@ -89,6 +89,9 @@ private:
 
   rclcpp::Subscription<WrenchMsg>::SharedPtr body_force_sub_;
   rclcpp::Publisher<Float64MultiArrayMsg>::SharedPtr output_pub_;
+  rclcpp::Publisher<Float64MultiArrayMsg>::SharedPtr allocation_matrix_pub_;
+  rclcpp::TimerBase::SharedPtr allocation_matrix_timer_;
+  Float64MultiArrayMsg allocation_matrix_msg_;
   rclcpp::Publisher<WrenchMsg>::SharedPtr wrench_output_pub_;
   rclcpp::Publisher<DebugMsg>::SharedPtr debug_pub_;
   std::shared_ptr<realtime_tools::RealtimePublisher<Float64MultiArrayMsg>> output_rt_pub_;
